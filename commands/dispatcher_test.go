@@ -38,6 +38,8 @@ func TestDispatcherSupportsInfrastructureCommandSurface(t *testing.T) {
 		"ovs.configure",
 		"ksm.configure",
 		"guest-agent.enable",
+		"vm.create.synology-dsm",
+		"vm.create.zimaos",
 		"rpcbind.disable",
 		"smart.schedule",
 		"pve.upgrade",
@@ -48,6 +50,7 @@ func TestDispatcherSupportsInfrastructureCommandSurface(t *testing.T) {
 		"network.verify",
 		"network.repair",
 		"martian.fix",
+		"xshok.conflict.detect",
 	} {
 		if !dispatcher.Supports(command) {
 			t.Fatalf("expected %s to be supported", command)
@@ -221,6 +224,27 @@ func TestAdditionalProxMenuXCommandsBuildSafeShellSteps(t *testing.T) {
 			payload:  map[string]any{},
 			stepName: "martian-source-fix",
 			contains: "log_martians=0",
+		},
+		{
+			name:     "xshok conflict detection",
+			command:  "xshok.conflict.detect",
+			payload:  map[string]any{},
+			stepName: "xshok-conflict-detect",
+			contains: "99-proxmox.conf",
+		},
+		{
+			name:     "synology dsm vm create",
+			command:  "vm.create.synology-dsm",
+			payload:  map[string]any{"vmId": "301", "name": "dsm-nas", "loaderUrl": "https://example.invalid/loader.img", "dataDisks": []string{"/dev/disk/by-id/nvme-test"}},
+			stepName: "vm-create-synology-dsm",
+			contains: "qm create",
+		},
+		{
+			name:     "zimaos vm create",
+			command:  "vm.create.zimaos",
+			payload:  map[string]any{"vmId": "302", "name": "zima-home", "imageUrl": "https://example.invalid/zimaos.img"},
+			stepName: "vm-create-zimaos",
+			contains: "qm importdisk",
 		},
 		{
 			name:     "disk image import",

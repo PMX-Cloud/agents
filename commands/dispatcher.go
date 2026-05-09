@@ -211,6 +211,8 @@ var commandBuilders = map[string]commandBuilder{
 	"ovs.configure":               buildOvsConfigureSteps,
 	"ksm.configure":               buildKsmConfigureSteps,
 	"guest-agent.enable":          buildGuestAgentEnableSteps,
+	"vm.create.synology-dsm":      buildSynologyDsmVmCreateSteps,
+	"vm.create.zimaos":            buildZimaOsVmCreateSteps,
 	"pve.upgrade":                 buildPveUpgradeSteps,
 	"subscription-banner.remove":  buildSubscriptionBannerRemoveSteps,
 	"subscription-banner.restore": buildSubscriptionBannerRestoreSteps,
@@ -218,6 +220,7 @@ var commandBuilders = map[string]commandBuilder{
 	"network.verify":              buildNetworkVerifySteps,
 	"network.repair":              buildNetworkRepairSteps,
 	"martian.fix":                 buildMartianFixSteps,
+	"xshok.conflict.detect":       buildXshokConflictDetectSteps,
 }
 
 func buildHardeningApplySteps(payload json.RawMessage) ([]Step, error) {
@@ -1105,6 +1108,82 @@ func buildGuestAgentEnableSteps(payload json.RawMessage) ([]Step, error) {
 	}}, nil
 }
 
+func buildSynologyDsmVmCreateSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	vmID, err := requiredSafeTokenAny(params, "vmId", "targetId")
+	if err != nil {
+		return nil, err
+	}
+	name, err := requiredSafeToken(params, "name")
+	if err != nil {
+		return nil, err
+	}
+	loaderURL := stringParam(params, "loaderUrl", "")
+	if loaderURL == "" || strings.ContainsAny(loaderURL, "\n\r") {
+		return nil, fmt.Errorf("loaderUrl is required")
+	}
+	storage := stringParam(params, "storage", "local-lvm")
+	bridge := stringParam(params, "bridge", "vmbr0")
+	cores := intParam(params, "cores", 2)
+	memory := intParam(params, "memory", 4096)
+	loaderPath := fmt.Sprintf("/var/lib/vz/template/iso/pmx-dsm-loader-%s.img", vmID)
+	commands := []string{
+		"mkdir -p /var/lib/vz/template/iso",
+		fmt.Sprintf("curl -fsSL %s -o %s", shellQuote(loaderURL), shellQuote(loaderPath)),
+		fmt.Sprintf("qm create %s --name %s --memory %d --cores %d --net0 %s --scsihw virtio-scsi-single", shellQuote(vmID), shellQuote(name), memory, cores, shellQuote("virtio,bridge="+bridge)),
+		fmt.Sprintf("qm importdisk %s %s %s", shellQuote(vmID), shellQuote(loaderPath), shellQuote(storage)),
+		fmt.Sprintf("qm set %s --scsi0 %s --boot order=scsi0 --agent enabled=1", shellQuote(vmID), shellQuote(storage+":vm-"+vmID+"-disk-0")),
+	}
+	for index, diskPath := range stringSliceParam(params, "dataDisks") {
+		device, err := requiredAbsolutePathValue(diskPath, "dataDisks")
+		if err != nil {
+			return nil, err
+		}
+		commands = append(commands, fmt.Sprintf("qm set %s --scsi%d %s", shellQuote(vmID), index+1, shellQuote(device)))
+	}
+	return []Step{{
+		Name:    "vm-create-synology-dsm",
+		Command: joinShell(commands...),
+	}}, nil
+}
+
+func buildZimaOsVmCreateSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	vmID, err := requiredSafeTokenAny(params, "vmId", "targetId")
+	if err != nil {
+		return nil, err
+	}
+	name, err := requiredSafeToken(params, "name")
+	if err != nil {
+		return nil, err
+	}
+	imageURL := stringParam(params, "imageUrl", "")
+	if imageURL == "" || strings.ContainsAny(imageURL, "\n\r") {
+		return nil, fmt.Errorf("imageUrl is required")
+	}
+	storage := stringParam(params, "storage", "local-lvm")
+	bridge := stringParam(params, "bridge", "vmbr0")
+	cores := intParam(params, "cores", 2)
+	memory := intParam(params, "memory", 4096)
+	imagePath := fmt.Sprintf("/var/lib/vz/template/iso/pmx-zimaos-%s.img", vmID)
+	return []Step{{
+		Name: "vm-create-zimaos",
+		Command: joinShell(
+			"mkdir -p /var/lib/vz/template/iso",
+			fmt.Sprintf("curl -fsSL %s -o %s", shellQuote(imageURL), shellQuote(imagePath)),
+			fmt.Sprintf("qm create %s --name %s --memory %d --cores %d --net0 %s --scsihw virtio-scsi-single", shellQuote(vmID), shellQuote(name), memory, cores, shellQuote("virtio,bridge="+bridge)),
+			fmt.Sprintf("qm importdisk %s %s %s", shellQuote(vmID), shellQuote(imagePath), shellQuote(storage)),
+			fmt.Sprintf("qm set %s --scsi0 %s --boot order=scsi0 --agent enabled=1", shellQuote(vmID), shellQuote(storage+":vm-"+vmID+"-disk-0")),
+		),
+	}}, nil
+}
+
 func buildPveUpgradeSteps(payload json.RawMessage) ([]Step, error) {
 	params, err := readObject(payload)
 	if err != nil {
@@ -1260,6 +1339,19 @@ func buildMartianFixSteps(_ json.RawMessage) ([]Step, error) {
 	}}, nil
 }
 
+func buildXshokConflictDetectSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "xshok-conflict-detect",
+		Command: joinShell(
+			"set -u",
+			"paths='/etc/sysctl.d/99-proxmox.conf /etc/motd /etc/motd.d /root/.bashrc /root/.profile'",
+			"matches=''",
+			"for path in $paths; do if [ -e \"$path\" ] && grep -RIlE 'xshok|proxmox-ve-post-install|PVESMART|Proxmox VE Post Install' \"$path\" 2>/dev/null; then matches=\"$matches $path\"; fi; done",
+			"if [ -n \"$matches\" ]; then printf '%s\\n' 'xshok-conflict-detected' $matches; else printf '%s\\n' 'xshok-conflict-clear'; fi",
+		),
+	}}, nil
+}
+
 func readObject(payload json.RawMessage) (map[string]any, error) {
 	if len(payload) == 0 || string(payload) == "null" {
 		return map[string]any{}, nil
@@ -1295,6 +1387,24 @@ func stringParam(params map[string]any, key string, fallback string) string {
 		return strings.TrimSpace(typed)
 	}
 	return fallback
+}
+
+func stringSliceParam(params map[string]any, key string) []string {
+	value, ok := params[key]
+	if !ok {
+		return nil
+	}
+	rawItems, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	items := make([]string, 0, len(rawItems))
+	for _, raw := range rawItems {
+		if item, ok := raw.(string); ok && strings.TrimSpace(item) != "" {
+			items = append(items, strings.TrimSpace(item))
+		}
+	}
+	return items
 }
 
 func intParam(params map[string]any, key string, fallback int) int {
