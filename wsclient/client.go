@@ -38,6 +38,7 @@ type Config struct {
 	Token             string
 	MachineId         string
 	WireguardPubkey   string
+	AgentVersion      string
 	ReconnectInterval time.Duration
 	HeartbeatInterval time.Duration
 	OnMessage         func([]byte)
@@ -49,6 +50,7 @@ type Client struct {
 	config    Config
 	conn      *websocket.Conn
 	mu        sync.RWMutex
+	writeMu   sync.Mutex
 	ctx       context.Context
 	cancel    context.CancelFunc
 	connected bool
@@ -68,6 +70,9 @@ func New(cfg Config) (*Client, error) {
 	if cfg.HeartbeatInterval == 0 {
 		cfg.HeartbeatInterval = 30 * time.Second
 	}
+	if cfg.AgentVersion == "" {
+		cfg.AgentVersion = "unknown"
+	}
 
 	return &Client{
 		config: cfg,
@@ -84,7 +89,9 @@ func (c *Client) Start(ctx context.Context) error {
 }
 
 func (c *Client) Stop() {
-	c.cancel()
+	if c.cancel != nil {
+		c.cancel()
+	}
 	c.closeConnection()
 }
 
@@ -119,6 +126,10 @@ func (c *Client) connectionManager() {
 }
 
 func (c *Client) connect() error {
+	if c.ctx == nil {
+		c.ctx, c.cancel = context.WithCancel(context.Background())
+	}
+
 	u, err := url.Parse(c.config.ServerURL)
 	if err != nil {
 		return fmt.Errorf("invalid server URL: %w", err)
@@ -129,7 +140,7 @@ func (c *Client) connect() error {
 		"Authorization":            []string{"Bearer " + c.config.Token},
 		"X-Machine-Id":             []string{c.config.MachineId},
 		"X-WG-Pubkey":              []string{c.config.WireguardPubkey},
-		"X-Agent-Version":          []string{"0.1.0"},
+		"X-Agent-Version":          []string{c.config.AgentVersion},
 		"X-Agent-Protocol-Version": []string{ProtocolVersion},
 	}
 
@@ -155,7 +166,7 @@ func (c *Client) connect() error {
 
 	// Start goroutines for reading and heartbeat
 	go c.readLoop()
-	go c.heartbeatLoop()
+	go c.heartbeatLoop(conn)
 
 	return nil
 }
@@ -211,9 +222,7 @@ func (c *Client) readLoop() {
 		_, message, err := conn.ReadMessage()
 		if err != nil {
 			log.Printf("Read error: %v", err)
-			c.mu.Lock()
-			c.connected = false
-			c.mu.Unlock()
+			c.closeConnection()
 			return
 		}
 
@@ -228,7 +237,7 @@ func (c *Client) readLoop() {
 	}
 }
 
-func (c *Client) heartbeatLoop() {
+func (c *Client) heartbeatLoop(conn *websocket.Conn) {
 	ticker := time.NewTicker(c.config.HeartbeatInterval)
 	defer ticker.Stop()
 
@@ -237,16 +246,24 @@ func (c *Client) heartbeatLoop() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.sendHeartbeat(); err != nil {
+			if !c.isCurrentConnection(conn) {
+				return
+			}
+			if err := c.sendHeartbeat(conn); err != nil {
 				log.Printf("Failed to send heartbeat: %v", err)
 			}
 		}
 	}
 }
 
-func (c *Client) sendHeartbeat() error {
+func (c *Client) isCurrentConnection(conn *websocket.Conn) bool {
 	c.mu.RLock()
-	conn := c.conn
+	defer c.mu.RUnlock()
+	return c.connected && c.conn == conn
+}
+
+func (c *Client) sendHeartbeat(conn *websocket.Conn) error {
+	c.mu.RLock()
 	connected := c.connected
 	c.mu.RUnlock()
 
@@ -272,7 +289,7 @@ func (c *Client) sendHeartbeat() error {
 		return err
 	}
 
-	return conn.WriteMessage(websocket.TextMessage, data)
+	return c.writeMessage(conn, data)
 }
 
 func (c *Client) Send(message []byte) error {
@@ -285,6 +302,12 @@ func (c *Client) Send(message []byte) error {
 		return fmt.Errorf("not connected")
 	}
 
+	return c.writeMessage(conn, message)
+}
+
+func (c *Client) writeMessage(conn *websocket.Conn, message []byte) error {
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
 	return conn.WriteMessage(websocket.TextMessage, message)
 }
 

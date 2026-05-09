@@ -8,6 +8,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 )
@@ -96,12 +97,26 @@ func (c *Config) loadFromEnv() {
 }
 
 func (c *Config) Validate() error {
+	c.Token = strings.TrimSpace(c.Token)
+	c.ServerURL = strings.TrimSpace(c.ServerURL)
+	c.DataDir = strings.TrimSpace(c.DataDir)
+
 	if c.Token == "" {
 		return fmt.Errorf("token is required (set in config file or PMX_CLOUD_TOKEN env var)")
 	}
 
 	if c.ServerURL == "" {
 		return fmt.Errorf("server_url is required")
+	}
+	parsedServerURL, err := url.Parse(c.ServerURL)
+	if err != nil {
+		return fmt.Errorf("server_url is invalid: %w", err)
+	}
+	if parsedServerURL.Scheme != "ws" && parsedServerURL.Scheme != "wss" {
+		return fmt.Errorf("server_url must use ws:// or wss://")
+	}
+	if parsedServerURL.Host == "" {
+		return fmt.Errorf("server_url must include a host")
 	}
 
 	if c.DataDir == "" {

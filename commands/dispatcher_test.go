@@ -104,6 +104,42 @@ func TestFail2BanUnbanValidatesJailAndIp(t *testing.T) {
 	assertStepContains(t, runner.steps, "fail2ban-unban", "203.0.113.10")
 }
 
+func TestProvisioningApplyAcceptsBackendStepNamesAndBuildsRealCommands(t *testing.T) {
+	runner := &recordingRunner{}
+	dispatcher := NewDispatcher(runner)
+	payload := mustJSON(t, map[string]any{
+		"steps": []string{
+			"system-hardening",
+			"security-baseline",
+			"network-optimization",
+			"iommu-enable",
+			"nvidia-driver-install",
+			"zfs-tuning",
+			"log2ram-install",
+			"smart-scheduling",
+		},
+	})
+
+	result := dispatcher.Dispatch(context.Background(), "provisioning.apply", payload)
+
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %s: %s", result.Status, result.Error)
+	}
+	assertStepContains(t, runner.steps, "kernel-panic-auto-reboot", "99-kernelpanic.conf")
+	assertStepContains(t, runner.steps, "fail2ban-install", "fail2ban")
+	assertStepContains(t, runner.steps, "network-sysctl", "tcp_congestion_control=bbr")
+	assertStepContains(t, runner.steps, "iommu-enable", "vfio_pci")
+	assertStepContains(t, runner.steps, "nvidia-driver-install", "nvidia-driver")
+	assertStepContains(t, runner.steps, "zfs-tune", "zfs_arc_max")
+	assertStepContains(t, runner.steps, "log2ram-install", "log2ram")
+	assertStepContains(t, runner.steps, "smart-poll", "smartctl --scan-open")
+	for _, step := range runner.steps {
+		if containsString(step.Command, "queued for this node") {
+			t.Fatalf("provisioning step %s still uses placeholder command %q", step.Name, step.Command)
+		}
+	}
+}
+
 type recordingRunner struct {
 	steps []Step
 }

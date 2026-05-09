@@ -217,14 +217,36 @@ func EnsureKeys(dataDir string) (string, error) {
 	privateKeyPath := filepath.Join(dataDir, "wg-privatekey")
 	publicKeyPath := filepath.Join(dataDir, "wg-publickey")
 
-	// Check if keys already exist
 	if _, err := os.Stat(privateKeyPath); err == nil {
-		// Load existing public key
 		pubKey, err := os.ReadFile(publicKeyPath)
 		if err == nil {
-			return string(pubKey), nil
+			return strings.TrimSpace(string(pubKey)), nil
 		}
-		// If public key doesn't exist, regenerate from private key
+		if !os.IsNotExist(err) {
+			return "", fmt.Errorf("failed to read public key: %w", err)
+		}
+
+		privateKeyBytes, err := os.ReadFile(privateKeyPath)
+		if err != nil {
+			return "", fmt.Errorf("failed to read private key: %w", err)
+		}
+		privateKey, err := decodeWireGuardKey(string(privateKeyBytes))
+		if err != nil {
+			return "", fmt.Errorf("failed to decode private key: %w", err)
+		}
+		publicKey, err := curve25519.X25519(privateKey, curve25519.Basepoint)
+		if err != nil {
+			return "", fmt.Errorf("failed to derive public key: %w", err)
+		}
+
+		pubKeyB64 := base64.StdEncoding.EncodeToString(publicKey)
+		if err := os.WriteFile(publicKeyPath, []byte(pubKeyB64), 0644); err != nil {
+			return "", fmt.Errorf("failed to save public key: %w", err)
+		}
+
+		return pubKeyB64, nil
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("failed to stat private key: %w", err)
 	}
 
 	// Generate new keypair

@@ -541,7 +541,11 @@ func buildProvisioningApplySteps(payload json.RawMessage) ([]Step, error) {
 		}
 		switch name {
 		case "hardening", "system-hardening":
-			steps = append(steps, Step{Name: "provision-hardening", Command: "echo 'hardening profile queued for this node'"})
+			hardeningSteps, err := buildProvisioningHardeningSteps()
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, hardeningSteps...)
 		case "security", "security-baseline":
 			securitySteps, err := buildFail2BanInstallSteps(nil)
 			if err != nil {
@@ -549,20 +553,36 @@ func buildProvisioningApplySteps(payload json.RawMessage) ([]Step, error) {
 			}
 			steps = append(steps, securitySteps...)
 		case "network", "network-optimization":
-			steps = append(steps, Step{Name: "provision-network", Command: "echo 'network optimization profile queued for this node'"})
-		case "smart":
+			networkSteps, err := buildProvisioningNetworkSteps()
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, networkSteps...)
+		case "smart", "smart-scheduling":
 			smartSteps, err := buildSmartPollSteps(nil)
 			if err != nil {
 				return nil, err
 			}
 			steps = append(steps, smartSteps...)
-		case "zfs":
+		case "iommu", "iommu-enable":
+			iommuSteps, err := buildIommuEnableSteps(nil)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, iommuSteps...)
+		case "nvidia", "nvidia-driver", "nvidia-driver-install":
+			nvidiaSteps, err := buildNvidiaDriverInstallSteps(nil)
+			if err != nil {
+				return nil, err
+			}
+			steps = append(steps, nvidiaSteps...)
+		case "zfs", "zfs-tuning":
 			zfsSteps, err := buildZfsTuneSteps(payload)
 			if err != nil {
 				return nil, err
 			}
 			steps = append(steps, zfsSteps...)
-		case "log2ram":
+		case "log2ram", "log2ram-install":
 			logSteps, err := buildLog2RamInstallSteps(nil)
 			if err != nil {
 				return nil, err
@@ -574,6 +594,39 @@ func buildProvisioningApplySteps(payload json.RawMessage) ([]Step, error) {
 	}
 
 	return requireAtLeastOneStep(steps, "provisioning.apply")
+}
+
+func buildProvisioningHardeningSteps() ([]Step, error) {
+	return buildHardeningApplySteps(json.RawMessage(`{
+		"kernelPanicAutoReboot": true,
+		"increaseSystemLimits": true,
+		"optimizeJournald": true,
+		"optimizeMemory": true,
+		"installKernelHeaders": true,
+		"optimizeLogrotate": true
+	}`))
+}
+
+func buildProvisioningNetworkSteps() ([]Step, error) {
+	return buildNetworkOptimizeSteps(json.RawMessage(`{
+		"applyNetworkSysctl": true,
+		"enableTcpBBR": true,
+		"forceAptIPv4": true,
+		"optimizeNICSettings": true
+	}`))
+}
+
+func buildNvidiaDriverInstallSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "nvidia-driver-install",
+		Command: joinShell(
+			"apt-get update",
+			"headers_pkg=$(if apt-cache show \"proxmox-headers-$(uname -r)\" >/dev/null 2>&1; then printf '%s' \"proxmox-headers-$(uname -r)\"; elif apt-cache show \"pve-headers-$(uname -r)\" >/dev/null 2>&1; then printf '%s' \"pve-headers-$(uname -r)\"; else printf '%s' pve-headers; fi)",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y \"$headers_pkg\" nvidia-driver",
+			"update-initramfs -u -k all || true",
+			"nvidia-smi || true",
+		),
+	}}, nil
 }
 
 func buildCommunityScriptRunSteps(payload json.RawMessage) ([]Step, error) {

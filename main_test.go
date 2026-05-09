@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/AraaRashek/pmx-cloud/agent/config"
 )
 
 func TestNormalizeSHA256HashAcceptsRawAndPrefixedHex(t *testing.T) {
@@ -36,6 +38,23 @@ func TestNormalizeSHA256HashAcceptsRawAndPrefixedHex(t *testing.T) {
 func TestNormalizeSHA256HashRejectsInvalidHash(t *testing.T) {
 	if _, err := normalizeSHA256Hash("sha256:not-a-valid-hash"); err == nil {
 		t.Fatal("expected invalid hash error")
+	}
+}
+
+func TestSystemMachineIdFallsBackToHostnameWhenMachineIdFilesAreMissing(t *testing.T) {
+	machineID, err := systemMachineIdFromSources(
+		func(string) ([]byte, error) {
+			return nil, os.ErrNotExist
+		},
+		func() (string, error) {
+			return "pmx-test-host", nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("systemMachineIdFromSources returned error: %v", err)
+	}
+	if machineID != "hostname:pmx-test-host" {
+		t.Fatalf("expected hostname fallback, got %s", machineID)
 	}
 }
 
@@ -98,5 +117,28 @@ func TestDownloadAndVerifyUpdateRejectsHashMismatch(t *testing.T) {
 	destination := filepath.Join(t.TempDir(), "agent-update")
 	if err := downloadAndVerifyUpdate(context.Background(), server.URL, hex.EncodeToString(expected[:]), destination); err == nil {
 		t.Fatal("expected hash mismatch error")
+	}
+}
+
+func TestRunPreflightCreatesIdentityAndWireGuardKeys(t *testing.T) {
+	dataDir := t.TempDir()
+	configPath := filepath.Join(t.TempDir(), "agent.conf")
+	cfg := config.Config{
+		Token:     "pmx_test_token",
+		ServerURL: "wss://ws.pmxcloud.cloud/ws/agent",
+		DataDir:   dataDir,
+	}
+	if err := cfg.Save(configPath); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	if err := runPreflight(configPath); err != nil {
+		t.Fatalf("runPreflight returned error: %v", err)
+	}
+
+	for _, path := range []string{"machine-id", "wg-privatekey", "wg-publickey"} {
+		if _, err := os.Stat(filepath.Join(dataDir, path)); err != nil {
+			t.Fatalf("expected %s to be created: %v", path, err)
+		}
 	}
 }

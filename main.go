@@ -17,6 +17,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -42,9 +43,14 @@ import (
 )
 
 const (
-	Version           = "0.1.0"
 	DefaultConfigPath = "/etc/pmx-cloud/agent.conf"
 	DefaultDataDir    = "/var/lib/pmx-cloud"
+)
+
+var (
+	Version   = "0.1.0"
+	Commit    = "unknown"
+	BuildDate = "unknown"
 )
 
 type Agent struct {
@@ -70,12 +76,21 @@ func main() {
 	var (
 		configPath = flag.String("config", DefaultConfigPath, "Path to configuration file")
 		version    = flag.Bool("version", false, "Print version and exit")
+		preflight  = flag.Bool("preflight", false, "Validate config and local identity files, then exit")
 		setup      = flag.Bool("setup", false, "Run interactive setup")
 	)
 	flag.Parse()
 
 	if *version {
-		fmt.Printf("pmx-cloud-agent version %s\n", Version)
+		fmt.Printf("pmx-cloud-agent version %s commit %s built %s\n", Version, Commit, BuildDate)
+		os.Exit(0)
+	}
+
+	if *preflight {
+		if err := runPreflight(*configPath); err != nil {
+			log.Fatalf("Preflight failed: %v", err)
+		}
+		log.Println("Preflight passed")
 		os.Exit(0)
 	}
 
@@ -141,6 +156,7 @@ func NewAgent(cfg *config.Config) (*Agent, error) {
 		Token:             cfg.Token,
 		MachineId:         machineId,
 		WireguardPubkey:   wgPubkey,
+		AgentVersion:      Version,
 		ReconnectInterval: 5 * time.Second,
 		HeartbeatInterval: 30 * time.Second,
 		OnMessage:         agent.handleMessage,
@@ -611,18 +627,38 @@ func getOrCreateMachineId(dataDir string) (string, error) {
 
 	// Try to read existing machine ID
 	if data, err := os.ReadFile(machineIdPath); err == nil {
-		return string(data), nil
+		machineID := strings.TrimSpace(string(data))
+		if machineID == "" {
+			return "", fmt.Errorf("stored machine ID is empty")
+		}
+		return machineID, nil
 	}
 
-	// Generate new machine ID from system machine-id + MAC address
+	// Generate a stable machine ID from system machine-id + MAC address when
+	// available. Non-systemd test or rescue environments still get a persisted
+	// random identity instead of failing installation preflight.
 	systemMachineId, err := getSystemMachineId()
 	if err != nil {
-		return "", err
+		machineId, err := generateRandomMachineId()
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(machineIdPath, []byte(machineId), 0600); err != nil {
+			return "", err
+		}
+		return machineId, nil
 	}
 
 	macAddress, err := getPrimaryMacAddress()
 	if err != nil {
-		return "", err
+		machineId, err := generateRandomMachineId()
+		if err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(machineIdPath, []byte(machineId), 0600); err != nil {
+			return "", err
+		}
+		return machineId, nil
 	}
 
 	// Combine and hash
@@ -637,18 +673,71 @@ func getOrCreateMachineId(dataDir string) (string, error) {
 	return machineId, nil
 }
 
+func generateRandomMachineId() (string, error) {
+	randomBytes := make([]byte, 32)
+	if _, err := rand.Read(randomBytes); err != nil {
+		return "", fmt.Errorf("generate random machine ID: %w", err)
+	}
+	return hex.EncodeToString(randomBytes), nil
+}
+
 func getSystemMachineId() (string, error) {
-	// Try systemd machine-id
-	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
-		return string(data), nil
+	return systemMachineIdFromSources(os.ReadFile, os.Hostname)
+}
+
+func systemMachineIdFromSources(
+	readFile func(string) ([]byte, error),
+	hostname func() (string, error),
+) (string, error) {
+	for _, path := range []string{"/etc/machine-id", "/var/lib/dbus/machine-id"} {
+		data, err := readFile(path)
+		if err != nil {
+			continue
+		}
+		machineID := strings.TrimSpace(string(data))
+		if machineID != "" {
+			return machineID, nil
+		}
 	}
 
-	// Fallback to /var/lib/dbus/machine-id
-	if data, err := os.ReadFile("/var/lib/dbus/machine-id"); err == nil {
-		return string(data), nil
+	host, err := hostname()
+	if err == nil {
+		host = strings.TrimSpace(host)
+	}
+	if host != "" {
+		return "hostname:" + host, nil
 	}
 
-	return "", fmt.Errorf("could not find system machine-id")
+	return "", fmt.Errorf("could not find system machine-id or hostname")
+}
+
+func runPreflight(configPath string) error {
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+		return fmt.Errorf("create data directory: %w", err)
+	}
+
+	machineID, err := getOrCreateMachineId(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("prepare machine ID: %w", err)
+	}
+	if machineID == "" {
+		return fmt.Errorf("machine ID is empty")
+	}
+
+	wgPubkey, err := wgtunnel.EnsureKeys(cfg.DataDir)
+	if err != nil {
+		return fmt.Errorf("prepare WireGuard keys: %w", err)
+	}
+	if wgPubkey == "" {
+		return fmt.Errorf("WireGuard public key is empty")
+	}
+
+	return nil
 }
 
 func getPrimaryMacAddress() (string, error) {
