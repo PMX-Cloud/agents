@@ -168,26 +168,44 @@ func (r ShellRunner) Run(ctx context.Context, step Step) StepResult {
 }
 
 var commandBuilders = map[string]commandBuilder{
-	"hardening.apply":      buildHardeningApplySteps,
-	"network.optimize":     buildNetworkOptimizeSteps,
-	"persistent-nic-names": buildPersistentNicNameSteps,
-	"fail2ban.install":     buildFail2BanInstallSteps,
-	"fail2ban.unban":       buildFail2BanUnbanSteps,
-	"lynis.run":            buildLynisRunSteps,
-	"smart.poll":           buildSmartPollSteps,
-	"iommu.enable":         buildIommuEnableSteps,
-	"disk.format":          buildDiskFormatSteps,
-	"disk.passthrough":     buildDiskPassthroughSteps,
-	"gpu.attach":           buildGpuAttachSteps,
-	"gpu.detach":           buildGpuDetachSteps,
-	"provisioning.apply":   buildProvisioningApplySteps,
-	"community-script.run": buildCommunityScriptRunSteps,
-	"zfs.tune":             buildZfsTuneSteps,
-	"log2ram.install":      buildLog2RamInstallSteps,
-	"ovs.install":          buildOvsInstallSteps,
-	"ovs.configure":        buildOvsConfigureSteps,
-	"ksm.configure":        buildKsmConfigureSteps,
-	"guest-agent.enable":   buildGuestAgentEnableSteps,
+	"hardening.apply":             buildHardeningApplySteps,
+	"network.optimize":            buildNetworkOptimizeSteps,
+	"persistent-nic-names":        buildPersistentNicNameSteps,
+	"fail2ban.install":            buildFail2BanInstallSteps,
+	"fail2ban.unban":              buildFail2BanUnbanSteps,
+	"lynis.run":                   buildLynisRunSteps,
+	"rpcbind.disable":             buildRpcbindDisableSteps,
+	"smart.poll":                  buildSmartPollSteps,
+	"smart.schedule":              buildSmartScheduleSteps,
+	"iommu.enable":                buildIommuEnableSteps,
+	"apt.tune":                    buildAptTuneSteps,
+	"disk.format":                 buildDiskFormatSteps,
+	"disk.passthrough":            buildDiskPassthroughSteps,
+	"disk.import-image":           buildDiskImportImageSteps,
+	"nvme.controller.add":         buildNvmeControllerAddSteps,
+	"gpu.attach":                  buildGpuAttachSteps,
+	"gpu.detach":                  buildGpuDetachSteps,
+	"gpu.mode":                    buildGpuModeSteps,
+	"nvidia.driver.install":       buildNvidiaDriverInstallSteps,
+	"coral.tpu.install":           buildCoralTpuInstallSteps,
+	"coral.tpu.attach":            buildCoralTpuAttachSteps,
+	"sriov.configure":             buildSriovConfigureSteps,
+	"lxc.mount":                   buildLxcMountSteps,
+	"provisioning.apply":          buildProvisioningApplySteps,
+	"community-script.run":        buildCommunityScriptRunSteps,
+	"zfs.tune":                    buildZfsTuneSteps,
+	"log2ram.install":             buildLog2RamInstallSteps,
+	"ovs.install":                 buildOvsInstallSteps,
+	"ovs.configure":               buildOvsConfigureSteps,
+	"ksm.configure":               buildKsmConfigureSteps,
+	"guest-agent.enable":          buildGuestAgentEnableSteps,
+	"pve.upgrade":                 buildPveUpgradeSteps,
+	"subscription-banner.remove":  buildSubscriptionBannerRemoveSteps,
+	"subscription-banner.restore": buildSubscriptionBannerRestoreSteps,
+	"utilities.install":           buildUtilitiesInstallSteps,
+	"network.verify":              buildNetworkVerifySteps,
+	"network.repair":              buildNetworkRepairSteps,
+	"martian.fix":                 buildMartianFixSteps,
 }
 
 func buildHardeningApplySteps(payload json.RawMessage) ([]Step, error) {
@@ -381,6 +399,13 @@ func buildLynisRunSteps(_ json.RawMessage) ([]Step, error) {
 	}}, nil
 }
 
+func buildRpcbindDisableSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name:    "rpcbind-disable",
+		Command: "systemctl disable --now rpcbind rpcbind.socket || true",
+	}}, nil
+}
+
 func buildSmartPollSteps(_ json.RawMessage) ([]Step, error) {
 	return []Step{{
 		Name: "smart-poll",
@@ -388,6 +413,56 @@ func buildSmartPollSteps(_ json.RawMessage) ([]Step, error) {
 			"command -v smartctl >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y smartmontools",
 			"smartctl --scan-open",
 			"for device in $(smartctl --scan-open | awk '{print $1}'); do smartctl -a \"$device\" || true; done",
+		),
+	}}, nil
+}
+
+func buildSmartScheduleSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	device, err := requiredDevicePath(params, "device")
+	if err != nil {
+		return nil, err
+	}
+	testType, err := requiredSafeToken(params, "testType")
+	if err != nil {
+		return nil, err
+	}
+	schedule, err := requiredSafeToken(params, "schedule")
+	if err != nil {
+		return nil, err
+	}
+
+	testCode := map[string]string{
+		"short":      "S",
+		"long":       "L",
+		"conveyance": "C",
+	}[testType]
+	if testCode == "" {
+		return nil, fmt.Errorf("testType must be short, long, or conveyance")
+	}
+
+	scheduleExpr := map[string]string{
+		"daily":  fmt.Sprintf("%s/../.././03", testCode),
+		"weekly": fmt.Sprintf("%s/../../7/03", testCode),
+	}[schedule]
+	if scheduleExpr == "" {
+		return nil, fmt.Errorf("schedule must be daily or weekly")
+	}
+
+	entry := fmt.Sprintf("%s -a -s %s", device, scheduleExpr)
+	return []Step{{
+		Name: "smart-schedule",
+		Command: joinShell(
+			"apt-get update",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y smartmontools",
+			"touch /etc/smartd.conf",
+			fmt.Sprintf("grep -v %s /etc/smartd.conf > /etc/smartd.conf.pmx-cloud || true", shellQuote("^"+device+" ")),
+			fmt.Sprintf("printf '%%s\n' %s >> /etc/smartd.conf.pmx-cloud", shellQuote(entry)),
+			"mv /etc/smartd.conf.pmx-cloud /etc/smartd.conf",
+			"systemctl enable --now smartmontools || systemctl enable --now smartd || true",
 		),
 	}}, nil
 }
@@ -400,6 +475,16 @@ func buildIommuEnableSteps(_ json.RawMessage) ([]Step, error) {
 			"if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then sed -i \"s/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT=\\\"quiet $iommu\\\"/\" /etc/default/grub; fi",
 			"printf '%s\n' vfio vfio_iommu_type1 vfio_pci vfio_virqfd > /etc/modules-load.d/vfio.conf",
 			"update-grub",
+		),
+	}}, nil
+}
+
+func buildAptTuneSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "apt-tune",
+		Command: joinShell(
+			"printf '%s\n' 'Acquire::Queue-Mode \"access\";' 'Acquire::Retries \"3\";' 'Acquire::http::Pipeline-Depth \"5\";' 'APT::Get::Show-Upgraded \"true\";' > /etc/apt/apt.conf.d/99-pmx-cloud-performance",
+			"printf '%s\n' 'Acquire::Languages \"none\";' > /etc/apt/apt.conf.d/99-pmx-cloud-no-languages",
 		),
 	}}, nil
 }
@@ -441,6 +526,80 @@ func buildDiskFormatSteps(payload json.RawMessage) ([]Step, error) {
 			fmt.Sprintf("if findmnt -S %s >/dev/null 2>&1; then echo 'device is mounted' >&2; exit 1; fi", shellQuote(device)),
 			fmt.Sprintf("wipefs -a %s", shellQuote(device)),
 			formatCommand,
+		),
+	}}, nil
+}
+
+func buildDiskImportImageSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	vmID, err := requiredSafeTokenAny(params, "vmId", "targetId")
+	if err != nil {
+		return nil, err
+	}
+	source := stringParam(params, "source", stringParam(params, "localPath", ""))
+	imageURL := stringParam(params, "imageUrl", "")
+	if source == "" && imageURL == "" {
+		return nil, fmt.Errorf("source, localPath, or imageUrl is required")
+	}
+	if source != "" {
+		if _, err := requiredAbsolutePathValue(source, "source"); err != nil {
+			return nil, err
+		}
+	}
+	targetStorage, err := requiredSafeToken(params, "targetStorage")
+	if err != nil {
+		return nil, err
+	}
+	format := stringParam(params, "format", "qcow2")
+	if !oneOf(format, "img", "qcow2", "vmdk", "raw") {
+		return nil, fmt.Errorf("format must be img, qcow2, vmdk, or raw")
+	}
+
+	importSource := source
+	downloadCommand := ""
+	if imageURL != "" {
+		if !strings.HasPrefix(imageURL, "https://") && !strings.HasPrefix(imageURL, "http://") {
+			return nil, fmt.Errorf("imageUrl must be http or https")
+		}
+		importSource = fmt.Sprintf("/var/lib/vz/template/imports/pmxcloud-%s.%s", vmID, format)
+		downloadCommand = joinShell(
+			"mkdir -p /var/lib/vz/template/imports",
+			fmt.Sprintf("curl -fL %s -o %s", shellQuote(imageURL), shellQuote(importSource)),
+		)
+	}
+
+	return []Step{{
+		Name: "disk-import-image",
+		Command: joinShell(
+			downloadCommand,
+			fmt.Sprintf("test -f %s", shellQuote(importSource)),
+			fmt.Sprintf("qm importdisk %s %s %s --format %s", shellQuote(vmID), shellQuote(importSource), shellQuote(targetStorage), shellQuote(format)),
+		),
+	}}, nil
+}
+
+func buildNvmeControllerAddSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	vmID, err := requiredSafeTokenAny(params, "vmId", "targetId")
+	if err != nil {
+		return nil, err
+	}
+	slot := stringParam(params, "slot", "args")
+	if !isSafeToken(slot) {
+		return nil, fmt.Errorf("slot contains unsafe characters")
+	}
+
+	return []Step{{
+		Name: "nvme-controller-add",
+		Command: joinShell(
+			fmt.Sprintf("existing=$(qm config %s | awk -F': ' '/^args:/{print $2}')", shellQuote(vmID)),
+			fmt.Sprintf("qm set %s --%s \"$existing -device nvme,id=pmxnvme0,serial=pmxcloud\"", shellQuote(vmID), slot),
 		),
 	}}, nil
 }
@@ -520,6 +679,47 @@ func buildGpuDetachSteps(payload json.RawMessage) ([]Step, error) {
 	return []Step{{
 		Name:    "gpu-detach",
 		Command: fmt.Sprintf("qm set %s -delete %s", shellQuote(vmID), shellQuote(slot)),
+	}}, nil
+}
+
+func buildGpuModeSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	pciID, err := requiredPciID(params, "pciId")
+	if err != nil {
+		return nil, err
+	}
+	mode, err := requiredSafeToken(params, "mode")
+	if err != nil {
+		return nil, err
+	}
+	if !oneOf(mode, "host", "passthrough", "sriov") {
+		return nil, fmt.Errorf("mode must be host, passthrough, or sriov")
+	}
+
+	if mode == "host" {
+		return []Step{{
+			Name: "gpu-mode",
+			Command: joinShell(
+				fmt.Sprintf("vendor_device=$(lspci -n -s %s | awk '{print $3}')", shellQuote(pciID)),
+				"test -n \"$vendor_device\"",
+				"sed -i \"/$vendor_device/d\" /etc/modprobe.d/vfio.conf 2>/dev/null || true",
+				"update-initramfs -u -k all || true",
+			),
+		}}, nil
+	}
+
+	return []Step{{
+		Name: "gpu-mode",
+		Command: joinShell(
+			fmt.Sprintf("vendor_device=$(lspci -n -s %s | awk '{print $3}')", shellQuote(pciID)),
+			"test -n \"$vendor_device\"",
+			"printf '%s\n' vfio vfio_iommu_type1 vfio_pci vfio_virqfd > /etc/modules-load.d/vfio.conf",
+			"printf 'options vfio-pci ids=%s\n' \"$vendor_device\" > /etc/modprobe.d/vfio.conf",
+			"update-initramfs -u -k all || true",
+		),
 	}}, nil
 }
 
@@ -625,6 +825,124 @@ func buildNvidiaDriverInstallSteps(_ json.RawMessage) ([]Step, error) {
 			"DEBIAN_FRONTEND=noninteractive apt-get install -y \"$headers_pkg\" nvidia-driver",
 			"update-initramfs -u -k all || true",
 			"nvidia-smi || true",
+		),
+	}}, nil
+}
+
+func buildCoralTpuInstallSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	tpuInterface := stringParam(params, "interface", "usb")
+	if !oneOf(tpuInterface, "usb", "m2") {
+		return nil, fmt.Errorf("interface must be usb or m2")
+	}
+	packages := "gasket-dkms libedgetpu1-std"
+	if tpuInterface == "m2" {
+		packages = "gasket-dkms libedgetpu1-max"
+	}
+
+	return []Step{{
+		Name: "coral-tpu-install",
+		Command: joinShell(
+			"printf '%s\n' 'deb https://packages.cloud.google.com/apt coral-edgetpu-stable main' > /etc/apt/sources.list.d/coral-edgetpu.list",
+			"curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | gpg --dearmor -o /usr/share/keyrings/coral-edgetpu.gpg || true",
+			"apt-get update",
+			fmt.Sprintf("DEBIAN_FRONTEND=noninteractive apt-get install -y %s", packages),
+			"modprobe apex || true",
+		),
+	}}, nil
+}
+
+func buildCoralTpuAttachSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	ctID, err := requiredSafeTokenAny(params, "ctId", "containerId", "targetId")
+	if err != nil {
+		return nil, err
+	}
+	device, err := requiredDevicePath(params, "device")
+	if err != nil {
+		return nil, err
+	}
+	mp := stringParam(params, "mountPath", device)
+	if _, err := requiredAbsolutePathValue(mp, "mountPath"); err != nil {
+		return nil, err
+	}
+
+	return []Step{{
+		Name: "coral-tpu-attach",
+		Command: joinShell(
+			fmt.Sprintf("test -e %s", shellQuote(device)),
+			fmt.Sprintf(
+				"printf '%%s\n' %s %s >> /etc/pve/lxc/%s.conf",
+				shellQuote("lxc.cgroup2.devices.allow: c 189:* rwm"),
+				shellQuote(fmt.Sprintf("lxc.mount.entry: %s %s none bind,optional,create=file 0 0", device, strings.TrimPrefix(mp, "/"))),
+				shellQuote(ctID),
+			),
+		),
+	}}, nil
+}
+
+func buildSriovConfigureSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	pfPciID, err := requiredPciID(params, "pfPciId")
+	if err != nil {
+		return nil, err
+	}
+	count := intParam(params, "count", -1)
+	if count < 0 || count > 256 {
+		return nil, fmt.Errorf("count must be between 0 and 256")
+	}
+	sysfsPath := fmt.Sprintf("/sys/bus/pci/devices/%s/sriov_numvfs", pfPciID)
+
+	return []Step{{
+		Name: "sriov-configure",
+		Command: joinShell(
+			fmt.Sprintf("test -w %s", shellQuote(sysfsPath)),
+			fmt.Sprintf("printf '0' > %s", shellQuote(sysfsPath)),
+			fmt.Sprintf("printf '%d' > %s", count, shellQuote(sysfsPath)),
+		),
+	}}, nil
+}
+
+func buildLxcMountSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	ctID, err := requiredSafeTokenAny(params, "ctId", "containerId", "targetId")
+	if err != nil {
+		return nil, err
+	}
+	hostPath, err := requiredAbsolutePath(params, "hostPath")
+	if err != nil {
+		return nil, err
+	}
+	containerPath := stringParam(params, "containerPath", stringParam(params, "mountPath", ""))
+	if _, err := requiredAbsolutePathValue(containerPath, "containerPath"); err != nil {
+		return nil, err
+	}
+	slot := stringParam(params, "slot", "mp0")
+	if !isSafeToken(slot) {
+		return nil, fmt.Errorf("slot contains unsafe characters")
+	}
+	options := fmt.Sprintf("%s,mp=%s", hostPath, containerPath)
+	if boolParam(params, "readOnly") {
+		options += ",ro=1"
+	}
+
+	return []Step{{
+		Name: "lxc-mount",
+		Command: joinShell(
+			fmt.Sprintf("mkdir -p %s", shellQuote(hostPath)),
+			fmt.Sprintf("pct set %s -%s %s", shellQuote(ctID), slot, shellQuote(options)),
 		),
 	}}, nil
 }
@@ -775,6 +1093,161 @@ func buildGuestAgentEnableSteps(payload json.RawMessage) ([]Step, error) {
 	}}, nil
 }
 
+func buildPveUpgradeSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	targetVersion, err := requiredSafeToken(params, "targetVersion")
+	if err != nil {
+		return nil, err
+	}
+	mode, err := requiredSafeToken(params, "mode")
+	if err != nil {
+		return nil, err
+	}
+	if !oneOf(mode, "automatic", "check-only", "interactive") {
+		return nil, fmt.Errorf("mode must be automatic, check-only, or interactive")
+	}
+
+	checker := "if command -v pve8to9 >/dev/null 2>&1; then pve8to9 --full; else pve8to9; fi"
+	if targetVersion != "9" {
+		checker = "pveversion && apt-get -s dist-upgrade"
+	}
+	if mode == "check-only" {
+		return []Step{{
+			Name:    "pve-upgrade-check",
+			Command: checker,
+		}}, nil
+	}
+
+	return []Step{{
+		Name: "pve-upgrade",
+		Command: joinShell(
+			checker,
+			"apt-get update",
+			"DEBIAN_FRONTEND=noninteractive apt-get dist-upgrade -y",
+			"pveversion",
+		),
+	}}, nil
+}
+
+func buildSubscriptionBannerRemoveSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "subscription-banner-remove",
+		Command: joinShell(
+			"target=/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js",
+			"backup_dir=/root/.pmxcloud/backups",
+			"test -f \"$target\"",
+			"mkdir -p \"$backup_dir\"",
+			"cp -a \"$target\" \"$backup_dir/proxmoxlib.$(date -u +%Y%m%dT%H%M%SZ).js\"",
+			"perl -0pi -e \"s/Ext.Msg.show\\(\\{\\s*title: gettext\\('No valid subscription'\\).*?\\}\\);/void(0);/s\" \"$target\" || true",
+			"systemctl restart pveproxy || true",
+		),
+	}}, nil
+}
+
+func buildSubscriptionBannerRestoreSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "subscription-banner-restore",
+		Command: joinShell(
+			"target=/usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js",
+			"latest=$(ls -1t /root/.pmxcloud/backups/proxmoxlib.*.js 2>/dev/null | head -n1)",
+			"test -n \"$latest\"",
+			"cp -a \"$latest\" \"$target\"",
+			"systemctl restart pveproxy || true",
+		),
+	}}, nil
+}
+
+func buildUtilitiesInstallSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	rawPackages, ok := params["packages"].([]any)
+	if !ok || len(rawPackages) == 0 {
+		return nil, fmt.Errorf("packages must be a non-empty array")
+	}
+
+	allowed := map[string]bool{
+		"axel": true, "htop": true, "btop": true, "iftop": true, "iotop": true,
+		"iperf3": true, "tmux": true, "dialog": true, "msr-tools": true,
+		"net-tools": true, "libguestfs-tools": true, "s-tui": true,
+		"intel-gpu-tools": true,
+	}
+	packages := make([]string, 0, len(rawPackages))
+	seen := map[string]bool{}
+	for _, raw := range rawPackages {
+		packageName, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("packages must contain strings")
+		}
+		packageName = strings.TrimSpace(packageName)
+		if !isSafeToken(packageName) || !allowed[packageName] {
+			return nil, fmt.Errorf("unsupported utility package %q", packageName)
+		}
+		if !seen[packageName] {
+			packages = append(packages, packageName)
+			seen[packageName] = true
+		}
+	}
+
+	quotedPackages := make([]string, 0, len(packages))
+	for _, packageName := range packages {
+		quotedPackages = append(quotedPackages, shellQuote(packageName))
+	}
+
+	return []Step{{
+		Name: "utilities-install",
+		Command: joinShell(
+			"apt-get update",
+			fmt.Sprintf("DEBIAN_FRONTEND=noninteractive apt-get install -y %s", strings.Join(quotedPackages, " ")),
+		),
+	}}, nil
+}
+
+func buildNetworkVerifySteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "network-verify",
+		Command: joinShell(
+			"ip -br addr",
+			"ip route",
+			"bridge link || true",
+			"if command -v ifquery >/dev/null 2>&1; then ifquery --list; fi",
+		),
+	}}, nil
+}
+
+func buildNetworkRepairSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	commands := []string{
+		"systemctl restart systemd-networkd || true",
+		"if command -v ifreload >/dev/null 2>&1; then ifreload -a; else systemctl restart networking || true; fi",
+	}
+	if boolParam(params, "restartOpenVSwitch") {
+		commands = append(commands, "systemctl restart openvswitch-switch || true")
+	}
+
+	return []Step{{
+		Name:    "network-repair",
+		Command: joinShell(commands...),
+	}}, nil
+}
+
+func buildMartianFixSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "martian-source-fix",
+		Command: joinShell(
+			"printf '%s\n' 'net.ipv4.conf.all.log_martians=0' 'net.ipv4.conf.default.log_martians=0' 'net.ipv4.conf.all.rp_filter=2' 'net.ipv4.conf.default.rp_filter=2' > /etc/sysctl.d/99-pmx-cloud-martian.conf",
+			"sysctl --system",
+		),
+	}}, nil
+}
+
 func readObject(payload json.RawMessage) (map[string]any, error) {
 	if len(payload) == 0 || string(payload) == "null" {
 		return map[string]any{}, nil
@@ -859,6 +1332,20 @@ func requiredDevicePath(params map[string]any, key string) (string, error) {
 	}
 	if !strings.HasPrefix(value, "/dev/") || strings.Contains(value, "..") {
 		return "", fmt.Errorf("%s must be an absolute /dev path", key)
+	}
+	return value, nil
+}
+
+func requiredAbsolutePath(params map[string]any, key string) (string, error) {
+	return requiredAbsolutePathValue(stringParam(params, key, ""), key)
+}
+
+func requiredAbsolutePathValue(value string, key string) (string, error) {
+	if value == "" {
+		return "", fmt.Errorf("%s is required", key)
+	}
+	if !strings.HasPrefix(value, "/") || strings.Contains(value, "..") || strings.ContainsAny(value, "\n\r") {
+		return "", fmt.Errorf("%s must be an absolute path", key)
 	}
 	return value, nil
 }

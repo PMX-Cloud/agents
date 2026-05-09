@@ -20,8 +20,16 @@ func TestDispatcherSupportsInfrastructureCommandSurface(t *testing.T) {
 		"iommu.enable",
 		"disk.format",
 		"disk.passthrough",
+		"disk.import-image",
+		"nvme.controller.add",
 		"gpu.attach",
 		"gpu.detach",
+		"gpu.mode",
+		"nvidia.driver.install",
+		"coral.tpu.install",
+		"coral.tpu.attach",
+		"sriov.configure",
+		"lxc.mount",
 		"provisioning.apply",
 		"community-script.run",
 		"zfs.tune",
@@ -30,6 +38,16 @@ func TestDispatcherSupportsInfrastructureCommandSurface(t *testing.T) {
 		"ovs.configure",
 		"ksm.configure",
 		"guest-agent.enable",
+		"rpcbind.disable",
+		"smart.schedule",
+		"pve.upgrade",
+		"subscription-banner.remove",
+		"subscription-banner.restore",
+		"utilities.install",
+		"apt.tune",
+		"network.verify",
+		"network.repair",
+		"martian.fix",
 	} {
 		if !dispatcher.Supports(command) {
 			t.Fatalf("expected %s to be supported", command)
@@ -137,6 +155,143 @@ func TestProvisioningApplyAcceptsBackendStepNamesAndBuildsRealCommands(t *testin
 		if containsString(step.Command, "queued for this node") {
 			t.Fatalf("provisioning step %s still uses placeholder command %q", step.Name, step.Command)
 		}
+	}
+}
+
+func TestAdditionalProxMenuXCommandsBuildSafeShellSteps(t *testing.T) {
+	tests := []struct {
+		name     string
+		command  string
+		payload  map[string]any
+		stepName string
+		contains string
+	}{
+		{
+			name:     "smart schedule",
+			command:  "smart.schedule",
+			payload:  map[string]any{"device": "/dev/sdb", "testType": "long", "schedule": "weekly"},
+			stepName: "smart-schedule",
+			contains: "smartd.conf",
+		},
+		{
+			name:     "pve upgrade check",
+			command:  "pve.upgrade",
+			payload:  map[string]any{"targetVersion": "9", "mode": "check-only"},
+			stepName: "pve-upgrade-check",
+			contains: "pve8to9",
+		},
+		{
+			name:     "subscription banner removal",
+			command:  "subscription-banner.remove",
+			payload:  map[string]any{},
+			stepName: "subscription-banner-remove",
+			contains: "proxmoxlib.js",
+		},
+		{
+			name:     "utility install",
+			command:  "utilities.install",
+			payload:  map[string]any{"packages": []string{"htop", "btop"}},
+			stepName: "utilities-install",
+			contains: "apt-get install -y",
+		},
+		{
+			name:     "apt tune",
+			command:  "apt.tune",
+			payload:  map[string]any{},
+			stepName: "apt-tune",
+			contains: "Acquire::Queue-Mode",
+		},
+		{
+			name:     "network verify",
+			command:  "network.verify",
+			payload:  map[string]any{},
+			stepName: "network-verify",
+			contains: "ip -br addr",
+		},
+		{
+			name:     "network repair",
+			command:  "network.repair",
+			payload:  map[string]any{"restartNetworking": true},
+			stepName: "network-repair",
+			contains: "ifreload -a",
+		},
+		{
+			name:     "martian source fix",
+			command:  "martian.fix",
+			payload:  map[string]any{},
+			stepName: "martian-source-fix",
+			contains: "log_martians=0",
+		},
+		{
+			name:     "disk image import",
+			command:  "disk.import-image",
+			payload:  map[string]any{"vmId": "101", "source": "/var/lib/vz/template/imports/disk.qcow2", "targetStorage": "local-lvm", "format": "qcow2"},
+			stepName: "disk-import-image",
+			contains: "qm importdisk",
+		},
+		{
+			name:     "nvme controller add",
+			command:  "nvme.controller.add",
+			payload:  map[string]any{"vmId": "101"},
+			stepName: "nvme-controller-add",
+			contains: "-device nvme",
+		},
+		{
+			name:     "lxc mount",
+			command:  "lxc.mount",
+			payload:  map[string]any{"ctId": "201", "hostPath": "/srv/shared/backups", "containerPath": "/mnt/backups", "readOnly": true},
+			stepName: "lxc-mount",
+			contains: "pct set",
+		},
+		{
+			name:     "nvidia driver install",
+			command:  "nvidia.driver.install",
+			payload:  map[string]any{},
+			stepName: "nvidia-driver-install",
+			contains: "nvidia-driver",
+		},
+		{
+			name:     "gpu mode",
+			command:  "gpu.mode",
+			payload:  map[string]any{"pciId": "0000:65:00.0", "mode": "passthrough"},
+			stepName: "gpu-mode",
+			contains: "vfio-pci",
+		},
+		{
+			name:     "coral tpu install",
+			command:  "coral.tpu.install",
+			payload:  map[string]any{"interface": "usb"},
+			stepName: "coral-tpu-install",
+			contains: "apex",
+		},
+		{
+			name:     "coral tpu attach",
+			command:  "coral.tpu.attach",
+			payload:  map[string]any{"ctId": "201", "device": "/dev/bus/usb/001/002"},
+			stepName: "coral-tpu-attach",
+			contains: "lxc.cgroup2.devices.allow",
+		},
+		{
+			name:     "sriov configure",
+			command:  "sriov.configure",
+			payload:  map[string]any{"pfPciId": "0000:17:00.0", "count": 4},
+			stepName: "sriov-configure",
+			contains: "sriov_numvfs",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			runner := &recordingRunner{}
+			dispatcher := NewDispatcher(runner)
+
+			result := dispatcher.Dispatch(context.Background(), tc.command, mustJSON(t, tc.payload))
+
+			if result.Status != "completed" {
+				t.Fatalf("expected completed result, got %s: %s", result.Status, result.Error)
+			}
+			assertStepContains(t, runner.steps, tc.stepName, tc.contains)
+		})
 	}
 }
 
