@@ -20,6 +20,19 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+const (
+	ProtocolVersion = "pmx-agent-v1"
+	MaxMessageBytes = 64 * 1024
+)
+
+type Envelope struct {
+	Version       string      `json:"version"`
+	Type          string      `json:"type"`
+	Payload       interface{} `json:"payload,omitempty"`
+	Timestamp     int64       `json:"timestamp"`
+	CorrelationID string      `json:"correlationId,omitempty"`
+}
+
 type Config struct {
 	ServerURL         string
 	Token             string
@@ -53,7 +66,7 @@ func New(cfg Config) (*Client, error) {
 		cfg.ReconnectInterval = 5 * time.Second
 	}
 	if cfg.HeartbeatInterval == 0 {
-		cfg.HeartbeatInterval = 60 * time.Second
+		cfg.HeartbeatInterval = 30 * time.Second
 	}
 
 	return &Client{
@@ -113,10 +126,11 @@ func (c *Client) connect() error {
 
 	// Build headers with authentication
 	headers := http.Header{
-		"Authorization":     []string{"Bearer " + c.config.Token},
-		"X-Machine-Id":      []string{c.config.MachineId},
-		"X-WG-Pubkey":       []string{c.config.WireguardPubkey},
-		"X-Agent-Version":   []string{"0.1.0"},
+		"Authorization":              []string{"Bearer " + c.config.Token},
+		"X-Machine-Id":               []string{c.config.MachineId},
+		"X-WG-Pubkey":                []string{c.config.WireguardPubkey},
+		"X-Agent-Version":            []string{"0.1.0"},
+		"X-Agent-Protocol-Version":   []string{ProtocolVersion},
 	}
 
 	log.Printf("Connecting to %s...", u.String())
@@ -125,6 +139,7 @@ func (c *Client) connect() error {
 	if err != nil {
 		return fmt.Errorf("dial failed: %w", err)
 	}
+	conn.SetReadLimit(MaxMessageBytes)
 
 	c.mu.Lock()
 	c.conn = conn
@@ -202,7 +217,7 @@ func (c *Client) readLoop() {
 			return
 		}
 
-		// Update last pong time
+		// Update last server-message time.
 		c.mu.Lock()
 		c.lastPong = time.Now()
 		c.mu.Unlock()
@@ -222,14 +237,14 @@ func (c *Client) heartbeatLoop() {
 		case <-c.ctx.Done():
 			return
 		case <-ticker.C:
-			if err := c.sendPing(); err != nil {
-				log.Printf("Failed to send ping: %v", err)
+			if err := c.sendHeartbeat(); err != nil {
+				log.Printf("Failed to send heartbeat: %v", err)
 			}
 		}
 	}
 }
 
-func (c *Client) sendPing() error {
+func (c *Client) sendHeartbeat() error {
 	c.mu.RLock()
 	conn := c.conn
 	connected := c.connected
@@ -239,19 +254,20 @@ func (c *Client) sendPing() error {
 		return fmt.Errorf("not connected")
 	}
 
-	ping := struct {
-		Type      string `json:"type"`
-		Timestamp int64  `json:"timestamp"`
-		MachineId string `json:"machine_id"`
-		WgStatus  string `json:"wg_status"`
-	}{
-		Type:      "ping",
-		Timestamp: time.Now().Unix(),
-		MachineId: c.config.MachineId,
-		WgStatus:  "unknown", // Will be updated by agent
+	heartbeat := Envelope{
+		Version:   ProtocolVersion,
+		Type:      "agent.heartbeat",
+		Timestamp: time.Now().UnixMilli(),
+		Payload: struct {
+			MachineID       string `json:"machineId"`
+			WireguardStatus string `json:"wireguardStatus"`
+		}{
+			MachineID:       c.config.MachineId,
+			WireguardStatus: "unknown", // Will be updated by agent
+		},
 	}
 
-	data, err := json.Marshal(ping)
+	data, err := json.Marshal(heartbeat)
 	if err != nil {
 		return err
 	}

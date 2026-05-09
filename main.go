@@ -52,6 +52,14 @@ type Agent struct {
 	wgPubkey    string
 }
 
+type agentEnvelope struct {
+	Version       string          `json:"version"`
+	Type          string          `json:"type"`
+	Payload       json.RawMessage `json:"payload,omitempty"`
+	Timestamp     int64           `json:"timestamp"`
+	CorrelationID string          `json:"correlationId,omitempty"`
+}
+
 func main() {
 	var (
 		configPath = flag.String("config", DefaultConfigPath, "Path to configuration file")
@@ -127,7 +135,7 @@ func NewAgent(cfg *config.Config) (*Agent, error) {
 		MachineId:         machineId,
 		WireguardPubkey:   wgPubkey,
 		ReconnectInterval: 5 * time.Second,
-		HeartbeatInterval: 60 * time.Second,
+		HeartbeatInterval: 30 * time.Second,
 		OnMessage:         agent.handleMessage,
 		OnConnect:         agent.handleConnect,
 		OnDisconnect:      agent.handleDisconnect,
@@ -197,6 +205,9 @@ func (a *Agent) Shutdown() error {
 
 func (a *Agent) handleConnect() {
 	log.Println("Connected to pmx-Cloud backend")
+	if err := a.sendRegistration(); err != nil {
+		log.Printf("Failed to send agent registration: %v", err)
+	}
 }
 
 func (a *Agent) handleDisconnect() {
@@ -207,66 +218,139 @@ func (a *Agent) handleDisconnect() {
 }
 
 func (a *Agent) handleMessage(msg []byte) {
-	var message struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"data,omitempty"`
-	}
+	var message agentEnvelope
 
 	if err := json.Unmarshal(msg, &message); err != nil {
 		log.Printf("Failed to parse message: %v", err)
 		return
 	}
 
+	if message.Version != wsclient.ProtocolVersion {
+		log.Printf("Unsupported agent protocol version from server: %s", message.Version)
+		return
+	}
+
 	switch message.Type {
-	case "pong":
-		a.handlePong(message.Data)
-	case "ip_assignment":
-		a.handleIpAssignment(message.Data)
-	case "ip_release":
+	case "cloud.hello":
+		log.Println("Backend is awaiting agent registration")
+	case "cloud.registered":
+		a.handleRegistered(message.Payload)
+	case "cloud.heartbeat.ack":
+		a.handleHeartbeatAck(message.Payload)
+	case "cloud.ip.assignment":
+		a.handleIpAssignment(message.Payload)
+	case "cloud.ip.release":
 		a.handleIpRelease()
-	case "update":
-		a.handleUpdate(message.Data)
+	case "cloud.update":
+		a.handleUpdate(message.Payload)
+	case "cloud.error":
+		a.handleCloudError(message.Payload)
 	default:
 		log.Printf("Unknown message type: %s", message.Type)
 	}
 }
 
-func (a *Agent) handlePong(data json.RawMessage) {
-	var pong struct {
-		Active        bool `json:"active"`
-		IpAssignment  *struct {
-			AssignedIp     string `json:"assigned_ip"`
-			RelayEndpoint  string `json:"relay_endpoint"`
-			RelayPubkey    string `json:"relay_pubkey"`
-			PeerWgIp       string `json:"peer_wg_ip"`
-		} `json:"ip_assignment,omitempty"`
+func (a *Agent) sendRegistration() error {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
 	}
 
-	if err := json.Unmarshal(data, &pong); err != nil {
-		log.Printf("Failed to parse pong: %v", err)
+	return a.sendEnvelope("agent.register", struct {
+		Hostname           string   `json:"hostname"`
+		ProxmoxVersion     string   `json:"proxmoxVersion,omitempty"`
+		AgentVersion       string   `json:"agentVersion"`
+		Capabilities       []string `json:"capabilities"`
+		MachineID          string   `json:"machineId"`
+		WireguardPublicKey string   `json:"wireguardPublicKey"`
+	}{
+		Hostname:           hostname,
+		AgentVersion:       Version,
+		Capabilities:       []string{"wireguard-relay"},
+		MachineID:          a.machineId,
+		WireguardPublicKey: a.wgPubkey,
+	})
+}
+
+func (a *Agent) sendEnvelope(messageType string, payload interface{}) error {
+	envelope := wsclient.Envelope{
+		Version:   wsclient.ProtocolVersion,
+		Type:      messageType,
+		Payload:   payload,
+		Timestamp: time.Now().UnixMilli(),
+	}
+
+	data, err := json.Marshal(envelope)
+	if err != nil {
+		return err
+	}
+
+	return a.wsClient.Send(data)
+}
+
+func (a *Agent) handleRegistered(data json.RawMessage) {
+	var registered struct {
+		ConnectionID        string `json:"connectionId"`
+		HeartbeatIntervalMs int64  `json:"heartbeatIntervalMs"`
+	}
+
+	if err := json.Unmarshal(data, &registered); err != nil {
+		log.Printf("Failed to parse registration acknowledgement: %v", err)
 		return
 	}
 
-	if !pong.Active {
+	log.Printf("Agent registered with connection ID %s", registered.ConnectionID)
+}
+
+func (a *Agent) handleHeartbeatAck(data json.RawMessage) {
+	var ack struct {
+		Active        *bool `json:"active,omitempty"`
+		IpAssignment  *struct {
+			AssignedIp     string `json:"assignedIp"`
+			RelayEndpoint  string `json:"relayEndpoint"`
+			RelayPubkey    string `json:"relayPubkey"`
+			PeerWgIp       string `json:"peerWgIp"`
+		} `json:"ipAssignment,omitempty"`
+	}
+
+	if err := json.Unmarshal(data, &ack); err != nil {
+		log.Printf("Failed to parse heartbeat acknowledgement: %v", err)
+		return
+	}
+
+	if ack.Active != nil && !*ack.Active {
 		log.Println("License not active, stopping WireGuard tunnel")
 		a.wgManager.Stop()
 		return
 	}
 
-	if pong.IpAssignment != nil {
-		a.configureWireGuard(pong.IpAssignment)
+	if ack.IpAssignment != nil {
+		a.configureWireGuard(ack.IpAssignment)
 	} else {
 		// No IP assignment, stop tunnel if running
-		a.wgManager.Stop()
+		log.Println("Heartbeat acknowledged")
 	}
+}
+
+func (a *Agent) handleCloudError(data json.RawMessage) {
+	var errPayload struct {
+		Message string `json:"message"`
+	}
+
+	if err := json.Unmarshal(data, &errPayload); err != nil {
+		log.Printf("Backend reported an error")
+		return
+	}
+
+	log.Printf("Backend reported an error: %s", errPayload.Message)
 }
 
 func (a *Agent) handleIpAssignment(data json.RawMessage) {
 	var assignment struct {
-		AssignedIp     string `json:"assigned_ip"`
-		RelayEndpoint  string `json:"relay_endpoint"`
-		RelayPubkey    string `json:"relay_pubkey"`
-		PeerWgIp       string `json:"peer_wg_ip"`
+		AssignedIp     string `json:"assignedIp"`
+		RelayEndpoint  string `json:"relayEndpoint"`
+		RelayPubkey    string `json:"relayPubkey"`
+		PeerWgIp       string `json:"peerWgIp"`
 	}
 
 	if err := json.Unmarshal(data, &assignment); err != nil {
@@ -285,10 +369,10 @@ func (a *Agent) handleIpRelease() {
 }
 
 func (a *Agent) configureWireGuard(assignment *struct {
-	AssignedIp     string `json:"assigned_ip"`
-	RelayEndpoint  string `json:"relay_endpoint"`
-	RelayPubkey    string `json:"relay_pubkey"`
-	PeerWgIp       string `json:"peer_wg_ip"`
+	AssignedIp     string `json:"assignedIp"`
+	RelayEndpoint  string `json:"relayEndpoint"`
+	RelayPubkey    string `json:"relayPubkey"`
+	PeerWgIp       string `json:"peerWgIp"`
 }) {
 	log.Printf("Configuring WireGuard tunnel:")
 	log.Printf("  Assigned IP: %s", assignment.AssignedIp)
@@ -410,7 +494,7 @@ func runSetup() error {
 	fmt.Println("2. Create /etc/pmx-cloud/agent.conf with your configuration:")
 	fmt.Println()
 	fmt.Println("   token = YOUR_LICENSE_TOKEN")
-	fmt.Println("   server_url = wss://ws.pmxcloud.cloud")
+	fmt.Println("   server_url = wss://ws.pmxcloud.cloud/ws/agent")
 	fmt.Println("   data_dir = /var/lib/pmx-cloud")
 	fmt.Println()
 	fmt.Println("3. Start the agent: pmx-cloud-agent")
