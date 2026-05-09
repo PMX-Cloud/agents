@@ -76,6 +76,15 @@ func (d *Dispatcher) Supports(command string) bool {
 }
 
 func (d *Dispatcher) Dispatch(ctx context.Context, command string, payload json.RawMessage) Result {
+	return d.DispatchWithObserver(ctx, command, payload, nil)
+}
+
+func (d *Dispatcher) DispatchWithObserver(
+	ctx context.Context,
+	command string,
+	payload json.RawMessage,
+	observer func(step StepResult, stepIndex int, stepCount int),
+) Result {
 	started := time.Now()
 	result := Result{
 		Command:   command,
@@ -101,9 +110,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, command string, payload json.
 		return result
 	}
 
-	for _, step := range steps {
+	for index, step := range steps {
 		stepResult := d.runner.Run(ctx, step)
 		result.Steps = append(result.Steps, stepResult)
+		if observer != nil {
+			observer(stepResult, index, len(steps))
+		}
 		if stepResult.Status != "completed" {
 			result.Status = "failed"
 			if stepResult.Error != "" {

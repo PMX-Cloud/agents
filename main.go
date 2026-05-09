@@ -54,14 +54,15 @@ var (
 )
 
 type Agent struct {
-	config    *config.Config
-	wsClient  *wsclient.Client
-	wgManager *wgtunnel.Manager
-	commands  *commands.Dispatcher
-	ctx       context.Context
-	cancel    context.CancelFunc
-	machineId string
-	wgPubkey  string
+	config           *config.Config
+	wsClient         *wsclient.Client
+	wgManager        *wgtunnel.Manager
+	commands         *commands.Dispatcher
+	ctx              context.Context
+	cancel           context.CancelFunc
+	machineId        string
+	wgPubkey         string
+	sendEnvelopeHook func(messageType string, payload interface{}, correlationID string) error
 }
 
 type agentEnvelope struct {
@@ -308,6 +309,10 @@ func (a *Agent) sendEnvelope(messageType string, payload interface{}) error {
 }
 
 func (a *Agent) sendEnvelopeWithCorrelation(messageType string, payload interface{}, correlationID string) error {
+	if a.sendEnvelopeHook != nil {
+		return a.sendEnvelopeHook(messageType, payload, correlationID)
+	}
+
 	envelope := wsclient.Envelope{
 		Version:       wsclient.ProtocolVersion,
 		Type:          messageType,
@@ -337,7 +342,18 @@ func (a *Agent) handleCommandRequest(message agentEnvelope) {
 	}
 
 	log.Printf("Executing agent command %s", command)
-	result := a.commands.Dispatch(a.ctx, command, payload)
+	result := a.commands.DispatchWithObserver(a.ctx, command, payload, func(step commands.StepResult, stepIndex int, stepCount int) {
+		progress := map[string]interface{}{
+			"command":    command,
+			"step":       step,
+			"stepIndex":  stepIndex,
+			"stepCount":  stepCount,
+			"streamType": "step",
+		}
+		if err := a.sendEnvelopeWithCorrelation("agent.command.output", progress, message.CorrelationID); err != nil {
+			log.Printf("Failed to stream command output: %v", err)
+		}
+	})
 	if err := a.sendEnvelopeWithCorrelation("agent.response", result, message.CorrelationID); err != nil {
 		log.Printf("Failed to send command response: %v", err)
 	}

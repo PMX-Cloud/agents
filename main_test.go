@@ -4,13 +4,16 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/AraaRashek/pmx-cloud/agent/commands"
 	"github.com/AraaRashek/pmx-cloud/agent/config"
 )
 
@@ -141,4 +144,65 @@ func TestRunPreflightCreatesIdentityAndWireGuardKeys(t *testing.T) {
 			t.Fatalf("expected %s to be created: %v", path, err)
 		}
 	}
+}
+
+func TestHandleCommandRequestStreamsStepOutputBeforeFinalResponse(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var sent []string
+	agent := &Agent{
+		ctx: ctx,
+		commands: commands.NewDispatcher(fakeCommandRunner{
+			result: commands.StepResult{
+				Name:       "disable rpcbind",
+				Command:    "systemctl disable --now rpcbind",
+				Status:     "completed",
+				ExitCode:   0,
+				Output:     "rpcbind disabled",
+				StartedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+				FinishedAt: time.Now().UTC().Format(time.RFC3339Nano),
+			},
+		}),
+		sendEnvelopeHook: func(messageType string, _ interface{}, correlationID string) error {
+			sent = append(sent, messageType+":"+correlationID)
+			return nil
+		},
+	}
+
+	payload, err := json.Marshal(map[string]any{
+		"command": "rpcbind.disable",
+		"params":  map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("marshal command payload: %v", err)
+	}
+
+	agent.handleCommandRequest(agentEnvelope{
+		Version:       "pmx-agent-v1",
+		Type:          "cloud.job.request",
+		Payload:       payload,
+		CorrelationID: "corr-test",
+	})
+
+	if len(sent) < 2 {
+		t.Fatalf("expected progress and final response, got %v", sent)
+	}
+	if sent[0] != "agent.command.output:corr-test" {
+		t.Fatalf("expected first message to stream command output, got %v", sent)
+	}
+	if sent[len(sent)-1] != "agent.response:corr-test" {
+		t.Fatalf("expected final response, got %v", sent)
+	}
+}
+
+type fakeCommandRunner struct {
+	result commands.StepResult
+}
+
+func (r fakeCommandRunner) Run(_ context.Context, step commands.Step) commands.StepResult {
+	result := r.result
+	result.Name = step.Name
+	result.Command = step.Command
+	return result
 }
