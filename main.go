@@ -29,6 +29,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/AraaRashek/pmx-cloud/agent/commands"
 	"github.com/AraaRashek/pmx-cloud/agent/config"
 	"github.com/AraaRashek/pmx-cloud/agent/wgtunnel"
 	"github.com/AraaRashek/pmx-cloud/agent/wsclient"
@@ -44,6 +45,7 @@ type Agent struct {
 	config    *config.Config
 	wsClient  *wsclient.Client
 	wgManager *wgtunnel.Manager
+	commands  *commands.Dispatcher
 	ctx       context.Context
 	cancel    context.CancelFunc
 	machineId string
@@ -124,6 +126,7 @@ func NewAgent(cfg *config.Config) (*Agent, error) {
 		cancel:    cancel,
 		machineId: machineId,
 		wgPubkey:  wgPubkey,
+		commands:  commands.NewDispatcher(commands.ShellRunner{Timeout: 30 * time.Minute}),
 	}
 
 	// Create WebSocket client
@@ -243,7 +246,13 @@ func (a *Agent) handleMessage(msg []byte) {
 		a.handleUpdate(message.Payload)
 	case "cloud.error":
 		a.handleCloudError(message.Payload)
+	case "cloud.job.request":
+		a.handleCommandRequest(message)
 	default:
+		if a.commands != nil && a.commands.Supports(message.Type) {
+			a.handleCommandRequest(message)
+			return
+		}
 		log.Printf("Unknown message type: %s", message.Type)
 	}
 }
@@ -253,6 +262,8 @@ func (a *Agent) sendRegistration() error {
 	if err != nil {
 		hostname = "unknown"
 	}
+
+	capabilities := append([]string{"wireguard-relay", "node-management"}, commands.SupportedCommands()...)
 
 	return a.sendEnvelope("agent.register", struct {
 		Hostname           string   `json:"hostname"`
@@ -264,18 +275,23 @@ func (a *Agent) sendRegistration() error {
 	}{
 		Hostname:           hostname,
 		AgentVersion:       Version,
-		Capabilities:       []string{"wireguard-relay"},
+		Capabilities:       capabilities,
 		MachineID:          a.machineId,
 		WireguardPublicKey: a.wgPubkey,
 	})
 }
 
 func (a *Agent) sendEnvelope(messageType string, payload interface{}) error {
+	return a.sendEnvelopeWithCorrelation(messageType, payload, "")
+}
+
+func (a *Agent) sendEnvelopeWithCorrelation(messageType string, payload interface{}, correlationID string) error {
 	envelope := wsclient.Envelope{
-		Version:   wsclient.ProtocolVersion,
-		Type:      messageType,
-		Payload:   payload,
-		Timestamp: time.Now().UnixMilli(),
+		Version:       wsclient.ProtocolVersion,
+		Type:          messageType,
+		Payload:       payload,
+		Timestamp:     time.Now().UnixMilli(),
+		CorrelationID: correlationID,
 	}
 
 	data, err := json.Marshal(envelope)
@@ -284,6 +300,56 @@ func (a *Agent) sendEnvelope(messageType string, payload interface{}) error {
 	}
 
 	return a.wsClient.Send(data)
+}
+
+func (a *Agent) handleCommandRequest(message agentEnvelope) {
+	command, payload, err := resolveCommandRequest(message)
+	if err != nil {
+		log.Printf("Invalid command request: %v", err)
+		if sendErr := a.sendEnvelopeWithCorrelation("agent.error", map[string]string{
+			"message": err.Error(),
+		}, message.CorrelationID); sendErr != nil {
+			log.Printf("Failed to send command error response: %v", sendErr)
+		}
+		return
+	}
+
+	log.Printf("Executing agent command %s", command)
+	result := a.commands.Dispatch(a.ctx, command, payload)
+	if err := a.sendEnvelopeWithCorrelation("agent.response", result, message.CorrelationID); err != nil {
+		log.Printf("Failed to send command response: %v", err)
+	}
+}
+
+func resolveCommandRequest(message agentEnvelope) (string, json.RawMessage, error) {
+	if message.Type != "cloud.job.request" {
+		return message.Type, message.Payload, nil
+	}
+
+	var request struct {
+		Command string          `json:"command"`
+		JobType string          `json:"jobType"`
+		Params  json.RawMessage `json:"params"`
+	}
+
+	if err := json.Unmarshal(message.Payload, &request); err != nil {
+		return "", nil, fmt.Errorf("failed to parse job request: %w", err)
+	}
+
+	command := request.Command
+	if command == "" {
+		command = request.JobType
+	}
+	if command == "" {
+		return "", nil, fmt.Errorf("cloud.job.request missing command or jobType")
+	}
+
+	payload := request.Params
+	if len(payload) == 0 {
+		payload = json.RawMessage(`{}`)
+	}
+
+	return command, payload, nil
 }
 
 func (a *Agent) handleRegistered(data json.RawMessage) {
