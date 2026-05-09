@@ -12,13 +12,14 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
-	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
 
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
+	wgtun "golang.zx2c4.com/wireguard/tun"
 	"golang.zx2c4.com/wireguard/tun/netstack"
 )
 
@@ -42,12 +43,12 @@ type TunnelConfig struct {
 }
 
 type Manager struct {
-	config   Config
-	device   *device.Device
-	tun      *netstack.Net
-	mu       sync.RWMutex
-	running  bool
-	stopChan chan struct{}
+	config    Config
+	device    *device.Device
+	tunDevice wgtun.Device
+	mu        sync.RWMutex
+	running   bool
+	stopChan  chan struct{}
 }
 
 func New(cfg Config) (*Manager, error) {
@@ -76,10 +77,14 @@ func (m *Manager) Start(tunnelCfg TunnelConfig) error {
 		return fmt.Errorf("failed to read private key: %w", err)
 	}
 
-	// Create userspace TUN device
-	tun, tnet, err := netstack.CreateNetTUN(
-		[]net.IPNet{{IP: net.ParseIP(tunnelCfg.Address), Mask: net.CIDRMask(32, 32)}},
-		[]net.IPNet{},
+	localAddress, err := parseTunnelAddress(tunnelCfg.Address)
+	if err != nil {
+		return err
+	}
+
+	tunDevice, _, err := netstack.CreateNetTUN(
+		[]netip.Addr{localAddress},
+		[]netip.Addr{},
 		1420,
 	)
 	if err != nil {
@@ -88,12 +93,12 @@ func (m *Manager) Start(tunnelCfg TunnelConfig) error {
 
 	// Create WireGuard device
 	logger := device.NewLogger(device.LogLevelError, fmt.Sprintf("(%s) ", m.config.InterfaceName))
-	dev := device.NewDevice(tun, conn.NewDefaultBind(), logger)
+	dev := device.NewDevice(tunDevice, conn.NewDefaultBind(), logger)
 
 	// Configure device
 	peerPublicKey, err := base64.StdEncoding.DecodeString(tunnelCfg.Peer.PublicKey)
 	if err != nil {
-		tun.Close()
+		tunDevice.Close()
 		return fmt.Errorf("failed to decode peer public key: %w", err)
 	}
 
@@ -113,17 +118,17 @@ allowed_ip=%s
 	)
 
 	if err := dev.IpcSet(ipcRequest); err != nil {
-		tun.Close()
+		tunDevice.Close()
 		return fmt.Errorf("failed to configure device: %w", err)
 	}
 
 	if err := dev.Up(); err != nil {
-		tun.Close()
+		tunDevice.Close()
 		return fmt.Errorf("failed to bring up device: %w", err)
 	}
 
 	m.device = dev
-	m.tun = tnet
+	m.tunDevice = tunDevice
 	m.running = true
 
 	log.Printf("WireGuard tunnel %s started successfully", m.config.InterfaceName)
@@ -150,9 +155,9 @@ func (m *Manager) stopInternal() error {
 		m.device = nil
 	}
 
-	if m.tun != nil {
-		m.tun.Close()
-		m.tun = nil
+	if m.tunDevice != nil {
+		m.tunDevice.Close()
+		m.tunDevice = nil
 	}
 
 	m.running = false
@@ -185,6 +190,19 @@ func (m *Manager) GetStats() (map[string]interface{}, error) {
 	return map[string]interface{}{
 		"ipc": stats,
 	}, nil
+}
+
+func parseTunnelAddress(value string) (netip.Addr, error) {
+	if prefix, err := netip.ParsePrefix(value); err == nil {
+		return prefix.Addr(), nil
+	}
+
+	address, err := netip.ParseAddr(value)
+	if err != nil {
+		return netip.Addr{}, fmt.Errorf("invalid tunnel address %q: %w", value, err)
+	}
+
+	return address, nil
 }
 
 // EnsureKeys generates or loads WireGuard keypair

@@ -46,13 +46,13 @@ type Config struct {
 }
 
 type Client struct {
-	config     Config
-	conn       *websocket.Conn
-	mu         sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	connected  bool
-	lastPong   time.Time
+	config    Config
+	conn      *websocket.Conn
+	mu        sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	connected bool
+	lastPong  time.Time
 }
 
 func New(cfg Config) (*Client, error) {
@@ -126,11 +126,11 @@ func (c *Client) connect() error {
 
 	// Build headers with authentication
 	headers := http.Header{
-		"Authorization":              []string{"Bearer " + c.config.Token},
-		"X-Machine-Id":               []string{c.config.MachineId},
-		"X-WG-Pubkey":                []string{c.config.WireguardPubkey},
-		"X-Agent-Version":            []string{"0.1.0"},
-		"X-Agent-Protocol-Version":   []string{ProtocolVersion},
+		"Authorization":            []string{"Bearer " + c.config.Token},
+		"X-Machine-Id":             []string{c.config.MachineId},
+		"X-WG-Pubkey":              []string{c.config.WireguardPubkey},
+		"X-Agent-Version":          []string{"0.1.0"},
+		"X-Agent-Protocol-Version": []string{ProtocolVersion},
 	}
 
 	log.Printf("Connecting to %s...", u.String())

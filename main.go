@@ -23,8 +23,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net/http"
-	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -43,13 +41,13 @@ const (
 )
 
 type Agent struct {
-	config      *config.Config
-	wsClient    *wsclient.Client
-	wgManager   *wgtunnel.Manager
-	ctx         context.Context
-	cancel      context.CancelFunc
-	machineId   string
-	wgPubkey    string
+	config    *config.Config
+	wsClient  *wsclient.Client
+	wgManager *wgtunnel.Manager
+	ctx       context.Context
+	cancel    context.CancelFunc
+	machineId string
+	wgPubkey  string
 }
 
 type agentEnvelope struct {
@@ -149,7 +147,7 @@ func NewAgent(cfg *config.Config) (*Agent, error) {
 	// Create WireGuard manager
 	wgManager, err := wgtunnel.New(wgtunnel.Config{
 		InterfaceName: "wg-pmx",
-		DataDir:     cfg.DataDir,
+		DataDir:       cfg.DataDir,
 	})
 	if err != nil {
 		cancel()
@@ -212,7 +210,7 @@ func (a *Agent) handleConnect() {
 
 func (a *Agent) handleDisconnect() {
 	log.Println("Disconnected from pmx-Cloud backend")
-	
+
 	// When disconnected, we might want to keep the WireGuard tunnel up
 	// for a grace period to avoid disrupting user traffic
 }
@@ -304,12 +302,12 @@ func (a *Agent) handleRegistered(data json.RawMessage) {
 
 func (a *Agent) handleHeartbeatAck(data json.RawMessage) {
 	var ack struct {
-		Active        *bool `json:"active,omitempty"`
-		IpAssignment  *struct {
-			AssignedIp     string `json:"assignedIp"`
-			RelayEndpoint  string `json:"relayEndpoint"`
-			RelayPubkey    string `json:"relayPubkey"`
-			PeerWgIp       string `json:"peerWgIp"`
+		Active       *bool `json:"active,omitempty"`
+		IpAssignment *struct {
+			AssignedIp    string `json:"assignedIp"`
+			RelayEndpoint string `json:"relayEndpoint"`
+			RelayPubkey   string `json:"relayPubkey"`
+			PeerWgIp      string `json:"peerWgIp"`
 		} `json:"ipAssignment,omitempty"`
 	}
 
@@ -347,10 +345,10 @@ func (a *Agent) handleCloudError(data json.RawMessage) {
 
 func (a *Agent) handleIpAssignment(data json.RawMessage) {
 	var assignment struct {
-		AssignedIp     string `json:"assignedIp"`
-		RelayEndpoint  string `json:"relayEndpoint"`
-		RelayPubkey    string `json:"relayPubkey"`
-		PeerWgIp       string `json:"peerWgIp"`
+		AssignedIp    string `json:"assignedIp"`
+		RelayEndpoint string `json:"relayEndpoint"`
+		RelayPubkey   string `json:"relayPubkey"`
+		PeerWgIp      string `json:"peerWgIp"`
 	}
 
 	if err := json.Unmarshal(data, &assignment); err != nil {
@@ -369,10 +367,10 @@ func (a *Agent) handleIpRelease() {
 }
 
 func (a *Agent) configureWireGuard(assignment *struct {
-	AssignedIp     string `json:"assignedIp"`
-	RelayEndpoint  string `json:"relayEndpoint"`
-	RelayPubkey    string `json:"relayPubkey"`
-	PeerWgIp       string `json:"peerWgIp"`
+	AssignedIp    string `json:"assignedIp"`
+	RelayEndpoint string `json:"relayEndpoint"`
+	RelayPubkey   string `json:"relayPubkey"`
+	PeerWgIp      string `json:"peerWgIp"`
 }) {
 	log.Printf("Configuring WireGuard tunnel:")
 	log.Printf("  Assigned IP: %s", assignment.AssignedIp)
@@ -385,8 +383,8 @@ func (a *Agent) configureWireGuard(assignment *struct {
 		ListenPort:     0, // Client doesn't listen
 		Peer: wgtunnel.PeerConfig{
 			PublicKey:           assignment.RelayPubkey,
-			Endpoint:          assignment.RelayEndpoint,
-			AllowedIPs:        "0.0.0.0/0",
+			Endpoint:            assignment.RelayEndpoint,
+			AllowedIPs:          "0.0.0.0/0",
 			PersistentKeepalive: 25,
 		},
 	}
@@ -451,7 +449,7 @@ func getSystemMachineId() (string, error) {
 	if data, err := os.ReadFile("/etc/machine-id"); err == nil {
 		return string(data), nil
 	}
-	
+
 	// Fallback to /var/lib/dbus/machine-id
 	if data, err := os.ReadFile("/var/lib/dbus/machine-id"); err == nil {
 		return string(data), nil
