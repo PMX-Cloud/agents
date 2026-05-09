@@ -10,13 +10,16 @@ package wgtunnel
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/netip"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
+	"golang.org/x/crypto/curve25519"
 	"golang.zx2c4.com/wireguard/conn"
 	"golang.zx2c4.com/wireguard/device"
 	wgtun "golang.zx2c4.com/wireguard/tun"
@@ -72,9 +75,13 @@ func (m *Manager) Start(tunnelCfg TunnelConfig) error {
 	log.Printf("Starting WireGuard tunnel %s...", m.config.InterfaceName)
 
 	// Read private key
-	privateKey, err := os.ReadFile(tunnelCfg.PrivateKeyPath)
+	privateKeyBytes, err := os.ReadFile(tunnelCfg.PrivateKeyPath)
 	if err != nil {
 		return fmt.Errorf("failed to read private key: %w", err)
+	}
+	privateKey, err := decodeWireGuardKey(string(privateKeyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to decode private key: %w", err)
 	}
 
 	localAddress, err := parseTunnelAddress(tunnelCfg.Address)
@@ -96,7 +103,7 @@ func (m *Manager) Start(tunnelCfg TunnelConfig) error {
 	dev := device.NewDevice(tunDevice, conn.NewDefaultBind(), logger)
 
 	// Configure device
-	peerPublicKey, err := base64.StdEncoding.DecodeString(tunnelCfg.Peer.PublicKey)
+	peerPublicKey, err := decodeWireGuardKey(tunnelCfg.Peer.PublicKey)
 	if err != nil {
 		tunDevice.Close()
 		return fmt.Errorf("failed to decode peer public key: %w", err)
@@ -109,9 +116,9 @@ endpoint=%s
 persistent_keepalive_interval=%d
 allowed_ip=%s
 `,
-		string(privateKey),
+		hex.EncodeToString(privateKey),
 		tunnelCfg.ListenPort,
-		base64.StdEncoding.EncodeToString(peerPublicKey),
+		hex.EncodeToString(peerPublicKey),
 		tunnelCfg.Peer.Endpoint,
 		tunnelCfg.Peer.PersistentKeepalive,
 		tunnelCfg.Peer.AllowedIPs,
@@ -230,10 +237,10 @@ func EnsureKeys(dataDir string) (string, error) {
 	privateKey[0] &= 248
 	privateKey[31] = (privateKey[31] & 127) | 64
 
-	// Calculate public key (simplified - in production use proper X25519)
-	// For now, we'll just base64 encode the private key as a placeholder
-	// The actual implementation should use golang.org/x/crypto/curve25519
-	publicKey := privateKey // Placeholder - should be X25519 scalar multiplication
+	publicKey, err := curve25519.X25519(privateKey, curve25519.Basepoint)
+	if err != nil {
+		return "", fmt.Errorf("failed to derive public key: %w", err)
+	}
 
 	// Save keys
 	if err := os.WriteFile(privateKeyPath, []byte(base64.StdEncoding.EncodeToString(privateKey)), 0600); err != nil {
@@ -246,4 +253,15 @@ func EnsureKeys(dataDir string) (string, error) {
 	}
 
 	return pubKeyB64, nil
+}
+
+func decodeWireGuardKey(value string) ([]byte, error) {
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return nil, err
+	}
+	if len(key) != 32 {
+		return nil, fmt.Errorf("wireguard key must decode to 32 bytes, got %d", len(key))
+	}
+	return key, nil
 }

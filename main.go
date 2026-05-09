@@ -20,12 +20,18 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -476,7 +482,128 @@ func (a *Agent) handleUpdate(data json.RawMessage) {
 	}
 
 	log.Printf("Update available: version %s", update.Version)
-	// TODO: Implement self-update
+	if err := installUpdate(a.ctx, update.Version, update.Url, update.Hash); err != nil {
+		log.Printf("Self-update failed: %v", err)
+		return
+	}
+
+	log.Printf("Self-update to version %s installed; restart the agent to run the new binary", update.Version)
+}
+
+func installUpdate(ctx context.Context, version string, rawURL string, expectedSHA256 string) error {
+	if strings.TrimSpace(version) == "" {
+		return errors.New("update version is required")
+	}
+	if strings.TrimSpace(rawURL) == "" {
+		return errors.New("update URL is required")
+	}
+	if strings.TrimSpace(expectedSHA256) == "" {
+		return errors.New("update SHA-256 hash is required")
+	}
+
+	executablePath, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("resolve current executable: %w", err)
+	}
+	executablePath, err = filepath.EvalSymlinks(executablePath)
+	if err != nil {
+		return fmt.Errorf("resolve executable symlink: %w", err)
+	}
+
+	executableInfo, err := os.Stat(executablePath)
+	if err != nil {
+		return fmt.Errorf("stat current executable: %w", err)
+	}
+
+	stagedPath := filepath.Join(
+		filepath.Dir(executablePath),
+		fmt.Sprintf(".%s.update-%d", filepath.Base(executablePath), time.Now().UnixNano()),
+	)
+	if err := downloadAndVerifyUpdate(ctx, rawURL, expectedSHA256, stagedPath); err != nil {
+		_ = os.Remove(stagedPath)
+		return err
+	}
+	if err := os.Chmod(stagedPath, executableInfo.Mode().Perm()); err != nil {
+		_ = os.Remove(stagedPath)
+		return fmt.Errorf("chmod staged update: %w", err)
+	}
+
+	backupPath := executablePath + ".bak"
+	if err := os.Remove(backupPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		_ = os.Remove(stagedPath)
+		return fmt.Errorf("remove previous backup: %w", err)
+	}
+	if err := os.Rename(executablePath, backupPath); err != nil {
+		_ = os.Remove(stagedPath)
+		return fmt.Errorf("backup current executable: %w", err)
+	}
+	if err := os.Rename(stagedPath, executablePath); err != nil {
+		_ = os.Rename(backupPath, executablePath)
+		_ = os.Remove(stagedPath)
+		return fmt.Errorf("install staged update: %w", err)
+	}
+
+	return nil
+}
+
+func downloadAndVerifyUpdate(ctx context.Context, rawURL string, expectedSHA256 string, destinationPath string) error {
+	parsedURL, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parse update URL: %w", err)
+	}
+	if parsedURL.Scheme != "https" && parsedURL.Scheme != "http" {
+		return fmt.Errorf("unsupported update URL scheme %q", parsedURL.Scheme)
+	}
+
+	expectedHash, err := normalizeSHA256Hash(expectedSHA256)
+	if err != nil {
+		return err
+	}
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return fmt.Errorf("create update request: %w", err)
+	}
+
+	response, err := http.DefaultClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("download update: %w", err)
+	}
+	defer response.Body.Close()
+
+	if response.StatusCode < 200 || response.StatusCode > 299 {
+		return fmt.Errorf("download update returned HTTP %d", response.StatusCode)
+	}
+
+	destination, err := os.OpenFile(destinationPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return fmt.Errorf("create staged update: %w", err)
+	}
+	defer destination.Close()
+
+	hasher := sha256.New()
+	if _, err := io.Copy(io.MultiWriter(destination, hasher), response.Body); err != nil {
+		return fmt.Errorf("write staged update: %w", err)
+	}
+
+	actualHash := hex.EncodeToString(hasher.Sum(nil))
+	if actualHash != expectedHash {
+		return fmt.Errorf("update SHA-256 mismatch: expected %s got %s", expectedHash, actualHash)
+	}
+
+	return nil
+}
+
+func normalizeSHA256Hash(hash string) (string, error) {
+	normalized := strings.ToLower(strings.TrimSpace(hash))
+	normalized = strings.TrimPrefix(normalized, "sha256:")
+	if len(normalized) != sha256.Size*2 {
+		return "", fmt.Errorf("update SHA-256 hash must be %d hex characters", sha256.Size*2)
+	}
+	if _, err := hex.DecodeString(normalized); err != nil {
+		return "", fmt.Errorf("update SHA-256 hash is not valid hex: %w", err)
+	}
+	return normalized, nil
 }
 
 func getOrCreateMachineId(dataDir string) (string, error) {
@@ -525,9 +652,25 @@ func getSystemMachineId() (string, error) {
 }
 
 func getPrimaryMacAddress() (string, error) {
-	// This is a simplified version - in production, use proper network interface detection
-	// For now, return a placeholder that will be combined with machine-id
-	return "00:00:00:00:00:00", nil
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	return primaryMacAddressFromInterfaces(interfaces)
+}
+
+func primaryMacAddressFromInterfaces(interfaces []net.Interface) (string, error) {
+	for _, iface := range interfaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if len(iface.HardwareAddr) == 0 {
+			continue
+		}
+		return iface.HardwareAddr.String(), nil
+	}
+
+	return "", fmt.Errorf("could not find active network interface with MAC address")
 }
 
 func runSetup() error {
