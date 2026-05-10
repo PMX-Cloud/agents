@@ -51,6 +51,10 @@ func TestDispatcherSupportsInfrastructureCommandSurface(t *testing.T) {
 		"network.repair",
 		"martian.fix",
 		"xshok.conflict.detect",
+		"agent.diagnostics",
+		"nested-cloud.install-proxmox",
+		"nested-cloud.configure-nat",
+		"nested-cloud.verify-ready",
 	} {
 		if !dispatcher.Supports(command) {
 			t.Fatalf("expected %s to be supported", command)
@@ -317,6 +321,128 @@ func TestAdditionalProxMenuXCommandsBuildSafeShellSteps(t *testing.T) {
 			assertStepContains(t, runner.steps, tc.stepName, tc.contains)
 		})
 	}
+}
+
+func TestAgentDiagnosticsBuildsReadOnlyRealClusterSmokeSteps(t *testing.T) {
+	runner := &recordingRunner{}
+	dispatcher := NewDispatcher(runner)
+
+	result := dispatcher.Dispatch(context.Background(), "agent.diagnostics", mustJSON(t, map[string]any{}))
+
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %s: %s", result.Status, result.Error)
+	}
+	for _, expected := range []struct {
+		name     string
+		contains string
+	}{
+		{name: "host-identity", contains: "hostnamectl"},
+		{name: "proxmox-readiness", contains: "pvecm status"},
+		{name: "runtime-tools", contains: "command -v"},
+		{name: "network-summary", contains: "ip -br addr"},
+	} {
+		assertStepContains(t, runner.steps, expected.name, expected.contains)
+	}
+
+	for _, step := range runner.steps {
+		if step.Destructive {
+			t.Fatalf("diagnostics step %s must not be marked destructive", step.Name)
+		}
+		for _, forbidden := range []string{
+			"apt-get install",
+			"mkfs.",
+			"wipefs",
+			"qm set",
+			"pct set",
+			"systemctl restart",
+			"sysctl --system",
+		} {
+			if containsString(step.Command, forbidden) {
+				t.Fatalf("diagnostics step %s contains mutating command %q in %q", step.Name, forbidden, step.Command)
+			}
+		}
+	}
+}
+
+func TestDispatcherResultIncludesFinishedAtTimestamp(t *testing.T) {
+	dispatcher := NewDispatcher(&recordingRunner{})
+
+	result := dispatcher.Dispatch(context.Background(), "agent.diagnostics", mustJSON(t, map[string]any{}))
+
+	if result.FinishedAt == "" {
+		t.Fatal("expected finishedAt timestamp to be set")
+	}
+}
+
+func TestNestedCloudInstallProxmoxBuildsGuestBootstrapCommand(t *testing.T) {
+	runner := &recordingRunner{}
+	dispatcher := NewDispatcher(runner)
+	payload := mustJSON(t, map[string]any{
+		"contractVersion":  1,
+		"nestedCloudId":    "ncl_1",
+		"outerVmId":        "vm_outer_1",
+		"outerProxmoxVmid": 201,
+		"privateCidr":      "10.77.0.0/24",
+		"gateway":          "10.77.0.1",
+		"dnsServers":       []string{"1.1.1.1", "8.8.8.8"},
+	})
+
+	result := dispatcher.Dispatch(context.Background(), "nested-cloud.install-proxmox", payload)
+
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %s: %s", result.Status, result.Error)
+	}
+	assertStepContains(t, runner.steps, "nested-cloud-guest-agent-ready", "qm guest ping '201'")
+	assertStepContains(t, runner.steps, "nested-cloud-install-proxmox", "qm guest exec '201'")
+	assertStepContains(t, runner.steps, "nested-cloud-install-proxmox", "proxmox-ve")
+	assertStepContains(t, runner.steps, "nested-cloud-install-proxmox", "pveum user token add")
+	assertStepContains(t, runner.steps, "nested-cloud-install-proxmox", "PMX_NESTED_CLOUD_INSTALL_RESULT")
+}
+
+func TestNestedCloudConfigureNatBuildsIdempotentPrivateNetworkCommand(t *testing.T) {
+	runner := &recordingRunner{}
+	dispatcher := NewDispatcher(runner)
+	payload := mustJSON(t, map[string]any{
+		"contractVersion":  1,
+		"nestedCloudId":    "ncl_1",
+		"outerVmId":        "vm_outer_1",
+		"outerProxmoxVmid": 201,
+		"privateCidr":      "10.77.0.0/24",
+		"gateway":          "10.77.0.1",
+		"dnsServers":       []string{"1.1.1.1"},
+	})
+
+	result := dispatcher.Dispatch(context.Background(), "nested-cloud.configure-nat", payload)
+
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %s: %s", result.Status, result.Error)
+	}
+	assertStepContains(t, runner.steps, "nested-cloud-configure-nat", "net.ipv4.ip_forward=1")
+	assertStepContains(t, runner.steps, "nested-cloud-configure-nat", "vmbr0")
+	assertStepContains(t, runner.steps, "nested-cloud-configure-nat", "MASQUERADE")
+	assertStepContains(t, runner.steps, "nested-cloud-configure-nat", "iptables -t nat -C POSTROUTING")
+	assertStepContains(t, runner.steps, "nested-cloud-configure-nat", "dnsmasq")
+}
+
+func TestNestedCloudVerifyReadyBuildsGuestHealthCheckCommand(t *testing.T) {
+	runner := &recordingRunner{}
+	dispatcher := NewDispatcher(runner)
+	payload := mustJSON(t, map[string]any{
+		"contractVersion":  1,
+		"nestedCloudId":    "ncl_1",
+		"outerVmId":        "vm_outer_1",
+		"outerProxmoxVmid": 201,
+		"adminUrl":         "https://192.0.2.50:8006",
+	})
+
+	result := dispatcher.Dispatch(context.Background(), "nested-cloud.verify-ready", payload)
+
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %s: %s", result.Status, result.Error)
+	}
+	assertStepContains(t, runner.steps, "nested-cloud-verify-ready", "pveversion")
+	assertStepContains(t, runner.steps, "nested-cloud-verify-ready", "pveproxy")
+	assertStepContains(t, runner.steps, "nested-cloud-verify-ready", "/api2/json/version")
 }
 
 type recordingRunner struct {

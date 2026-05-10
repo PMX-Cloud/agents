@@ -146,6 +146,27 @@ func TestRunPreflightCreatesIdentityAndWireGuardKeys(t *testing.T) {
 	}
 }
 
+func TestRunDiagnosticsDispatchesReadOnlyAgentDiagnosticsCommand(t *testing.T) {
+	result := runDiagnostics(context.Background(), fakeCommandRunner{
+		result: commands.StepResult{
+			Name:       "host-identity",
+			Command:    "hostnamectl",
+			Status:     "completed",
+			ExitCode:   0,
+			Output:     "pmx-test-node",
+			StartedAt:  time.Now().UTC().Format(time.RFC3339Nano),
+			FinishedAt: time.Now().UTC().Format(time.RFC3339Nano),
+		},
+	})
+
+	if result.Command != "agent.diagnostics" {
+		t.Fatalf("expected agent.diagnostics command, got %s", result.Command)
+	}
+	if result.Status != "completed" {
+		t.Fatalf("expected diagnostics to complete, got %s: %s", result.Status, result.Error)
+	}
+}
+
 func TestHandleCommandRequestStreamsStepOutputBeforeFinalResponse(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

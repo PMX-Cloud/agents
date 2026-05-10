@@ -68,3 +68,46 @@ Validate an installed config without opening a WebSocket:
 ```bash
 pmx-cloud-agent --preflight --config /etc/pmx-cloud/agent.conf
 ```
+
+Run read-only host diagnostics without opening a WebSocket:
+
+```bash
+pmx-cloud-agent --diagnostics
+```
+
+The diagnostics command emits JSON command results for:
+
+- host identity and Proxmox version
+- Proxmox cluster readiness (`/etc/pve`, `pvecm`, `pvesh`)
+- required runtime tools
+- network address and route summary
+
+## Real Cluster UAT Smoke
+
+Use a verified local binary first, and install without starting the service:
+
+```bash
+sudo ./Infra/scripts/install-agent.sh \
+  --token=pmx_xxx \
+  --server-url=wss://ws.pmxcloud.cloud/ws/agent \
+  --binary-path=./agent/dist/pmx-cloud-agent-0.1.0-linux-amd64 \
+  --no-start
+```
+
+Then run the read-only smoke script on the host:
+
+```bash
+sudo ./agent/scripts/real-cluster-smoke.sh \
+  --agent-bin=/usr/local/bin/pmx-cloud-agent \
+  --config=/etc/pmx-cloud/agent.conf \
+  --skip-systemd
+```
+
+After that, start the service and confirm backend registration:
+
+```bash
+sudo systemctl restart pmx-cloud-agent
+sudo ./agent/scripts/real-cluster-smoke.sh --agent-bin=/usr/local/bin/pmx-cloud-agent
+```
+
+For backend-to-agent proof, dispatch `cloud.job.request` with `jobType: "agent.diagnostics"` and empty `params`. This is the first command to run on a real cluster because it validates command dispatch and output streaming without changing host state.

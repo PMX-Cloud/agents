@@ -84,9 +84,9 @@ func (d *Dispatcher) DispatchWithObserver(
 	command string,
 	payload json.RawMessage,
 	observer func(step StepResult, stepIndex int, stepCount int),
-) Result {
+) (result Result) {
 	started := time.Now()
-	result := Result{
+	result = Result{
 		Command:   command,
 		Status:    "completed",
 		Steps:     []StepResult{},
@@ -191,6 +191,7 @@ var commandBuilders = map[string]commandBuilder{
 	"smart.schedule":              buildSmartScheduleSteps,
 	"iommu.enable":                buildIommuEnableSteps,
 	"apt.tune":                    buildAptTuneSteps,
+	"agent.diagnostics":           buildAgentDiagnosticsSteps,
 	"disk.format":                 buildDiskFormatSteps,
 	"disk.passthrough":            buildDiskPassthroughSteps,
 	"disk.import-image":           buildDiskImportImageSteps,
@@ -1296,6 +1297,39 @@ func buildUtilitiesInstallSteps(payload json.RawMessage) ([]Step, error) {
 			fmt.Sprintf("DEBIAN_FRONTEND=noninteractive apt-get install -y %s", strings.Join(quotedPackages, " ")),
 		),
 	}}, nil
+}
+
+func buildAgentDiagnosticsSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{
+		{
+			Name: "host-identity",
+			Command: joinShell(
+				"{ hostnamectl 2>/dev/null || hostname; }",
+				"uname -a",
+				"if command -v pveversion >/dev/null 2>&1; then pveversion; else printf '%s\n' 'pveversion=missing'; fi",
+			),
+		},
+		{
+			Name: "proxmox-readiness",
+			Command: joinShell(
+				"if [ -d /etc/pve ]; then ls -ld /etc/pve; else printf '%s\n' '/etc/pve=missing'; fi",
+				"if command -v pvecm >/dev/null 2>&1; then pvecm status || true; else printf '%s\n' 'pvecm=missing'; fi",
+				"if command -v pvesh >/dev/null 2>&1; then pvesh get /nodes --output-format json || true; else printf '%s\n' 'pvesh=missing'; fi",
+			),
+		},
+		{
+			Name:    "runtime-tools",
+			Command: "for tool in qm pct pvesh pveversion pvecm wg ip systemctl smartctl; do if command -v \"$tool\" >/dev/null 2>&1; then printf '%s=present\\n' \"$tool\"; else printf '%s=missing\\n' \"$tool\"; fi; done",
+		},
+		{
+			Name: "network-summary",
+			Command: joinShell(
+				"ip -br addr || true",
+				"ip route || true",
+				"if command -v resolvectl >/dev/null 2>&1; then resolvectl status || true; fi",
+			),
+		},
+	}, nil
 }
 
 func buildNetworkVerifySteps(_ json.RawMessage) ([]Step, error) {

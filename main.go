@@ -75,15 +75,29 @@ type agentEnvelope struct {
 
 func main() {
 	var (
-		configPath = flag.String("config", DefaultConfigPath, "Path to configuration file")
-		version    = flag.Bool("version", false, "Print version and exit")
-		preflight  = flag.Bool("preflight", false, "Validate config and local identity files, then exit")
-		setup      = flag.Bool("setup", false, "Run interactive setup")
+		configPath  = flag.String("config", DefaultConfigPath, "Path to configuration file")
+		version     = flag.Bool("version", false, "Print version and exit")
+		preflight   = flag.Bool("preflight", false, "Validate config and local identity files, then exit")
+		diagnostics = flag.Bool("diagnostics", false, "Run read-only host diagnostics, print JSON, then exit")
+		setup       = flag.Bool("setup", false, "Run interactive setup")
 	)
 	flag.Parse()
 
 	if *version {
 		fmt.Printf("pmx-cloud-agent version %s commit %s built %s\n", Version, Commit, BuildDate)
+		os.Exit(0)
+	}
+
+	if *diagnostics {
+		result := runDiagnostics(context.Background(), commands.ShellRunner{Timeout: 2 * time.Minute})
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(result); err != nil {
+			log.Fatalf("Failed to write diagnostics: %v", err)
+		}
+		if result.Status != "completed" {
+			os.Exit(1)
+		}
 		os.Exit(0)
 	}
 
@@ -327,6 +341,10 @@ func (a *Agent) sendEnvelopeWithCorrelation(messageType string, payload interfac
 	}
 
 	return a.wsClient.Send(data)
+}
+
+func runDiagnostics(ctx context.Context, runner commands.Runner) commands.Result {
+	return commands.NewDispatcher(runner).Dispatch(ctx, "agent.diagnostics", json.RawMessage(`{}`))
 }
 
 func (a *Agent) handleCommandRequest(message agentEnvelope) {
