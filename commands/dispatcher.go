@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -180,48 +182,51 @@ func (r ShellRunner) Run(ctx context.Context, step Step) StepResult {
 }
 
 var commandBuilders = map[string]commandBuilder{
-	"hardening.apply":             buildHardeningApplySteps,
-	"network.optimize":            buildNetworkOptimizeSteps,
-	"persistent-nic-names":        buildPersistentNicNameSteps,
-	"fail2ban.install":            buildFail2BanInstallSteps,
-	"fail2ban.unban":              buildFail2BanUnbanSteps,
-	"lynis.run":                   buildLynisRunSteps,
-	"rpcbind.disable":             buildRpcbindDisableSteps,
-	"smart.poll":                  buildSmartPollSteps,
-	"smart.schedule":              buildSmartScheduleSteps,
-	"iommu.enable":                buildIommuEnableSteps,
-	"apt.tune":                    buildAptTuneSteps,
-	"agent.diagnostics":           buildAgentDiagnosticsSteps,
-	"disk.format":                 buildDiskFormatSteps,
-	"disk.passthrough":            buildDiskPassthroughSteps,
-	"disk.import-image":           buildDiskImportImageSteps,
-	"nvme.controller.add":         buildNvmeControllerAddSteps,
-	"gpu.attach":                  buildGpuAttachSteps,
-	"gpu.detach":                  buildGpuDetachSteps,
-	"gpu.mode":                    buildGpuModeSteps,
-	"nvidia.driver.install":       buildNvidiaDriverInstallSteps,
-	"coral.tpu.install":           buildCoralTpuInstallSteps,
-	"coral.tpu.attach":            buildCoralTpuAttachSteps,
-	"sriov.configure":             buildSriovConfigureSteps,
-	"lxc.mount":                   buildLxcMountSteps,
-	"provisioning.apply":          buildProvisioningApplySteps,
-	"community-script.run":        buildCommunityScriptRunSteps,
-	"zfs.tune":                    buildZfsTuneSteps,
-	"log2ram.install":             buildLog2RamInstallSteps,
-	"ovs.install":                 buildOvsInstallSteps,
-	"ovs.configure":               buildOvsConfigureSteps,
-	"ksm.configure":               buildKsmConfigureSteps,
-	"guest-agent.enable":          buildGuestAgentEnableSteps,
-	"vm.create.synology-dsm":      buildSynologyDsmVmCreateSteps,
-	"vm.create.zimaos":            buildZimaOsVmCreateSteps,
-	"pve.upgrade":                 buildPveUpgradeSteps,
-	"subscription-banner.remove":  buildSubscriptionBannerRemoveSteps,
-	"subscription-banner.restore": buildSubscriptionBannerRestoreSteps,
-	"utilities.install":           buildUtilitiesInstallSteps,
-	"network.verify":              buildNetworkVerifySteps,
-	"network.repair":              buildNetworkRepairSteps,
-	"martian.fix":                 buildMartianFixSteps,
-	"xshok.conflict.detect":       buildXshokConflictDetectSteps,
+	"hardening.apply":              buildHardeningApplySteps,
+	"network.optimize":             buildNetworkOptimizeSteps,
+	"persistent-nic-names":         buildPersistentNicNameSteps,
+	"fail2ban.install":             buildFail2BanInstallSteps,
+	"fail2ban.unban":               buildFail2BanUnbanSteps,
+	"lynis.run":                    buildLynisRunSteps,
+	"rpcbind.disable":              buildRpcbindDisableSteps,
+	"smart.poll":                   buildSmartPollSteps,
+	"smart.schedule":               buildSmartScheduleSteps,
+	"iommu.enable":                 buildIommuEnableSteps,
+	"apt.tune":                     buildAptTuneSteps,
+	"agent.diagnostics":            buildAgentDiagnosticsSteps,
+	"disk.format":                  buildDiskFormatSteps,
+	"disk.passthrough":             buildDiskPassthroughSteps,
+	"disk.import-image":            buildDiskImportImageSteps,
+	"nvme.controller.add":          buildNvmeControllerAddSteps,
+	"gpu.attach":                   buildGpuAttachSteps,
+	"gpu.detach":                   buildGpuDetachSteps,
+	"gpu.mode":                     buildGpuModeSteps,
+	"nvidia.driver.install":        buildNvidiaDriverInstallSteps,
+	"coral.tpu.install":            buildCoralTpuInstallSteps,
+	"coral.tpu.attach":             buildCoralTpuAttachSteps,
+	"sriov.configure":              buildSriovConfigureSteps,
+	"lxc.mount":                    buildLxcMountSteps,
+	"provisioning.apply":           buildProvisioningApplySteps,
+	"community-script.run":         buildCommunityScriptRunSteps,
+	"zfs.tune":                     buildZfsTuneSteps,
+	"log2ram.install":              buildLog2RamInstallSteps,
+	"ovs.install":                  buildOvsInstallSteps,
+	"ovs.configure":                buildOvsConfigureSteps,
+	"ksm.configure":                buildKsmConfigureSteps,
+	"guest-agent.enable":           buildGuestAgentEnableSteps,
+	"vm.create.synology-dsm":       buildSynologyDsmVmCreateSteps,
+	"vm.create.zimaos":             buildZimaOsVmCreateSteps,
+	"pve.upgrade":                  buildPveUpgradeSteps,
+	"subscription-banner.remove":   buildSubscriptionBannerRemoveSteps,
+	"subscription-banner.restore":  buildSubscriptionBannerRestoreSteps,
+	"utilities.install":            buildUtilitiesInstallSteps,
+	"network.verify":               buildNetworkVerifySteps,
+	"network.repair":               buildNetworkRepairSteps,
+	"martian.fix":                  buildMartianFixSteps,
+	"xshok.conflict.detect":        buildXshokConflictDetectSteps,
+	"nested-cloud.install-proxmox": buildNestedCloudInstallProxmoxSteps,
+	"nested-cloud.configure-nat":   buildNestedCloudConfigureNatSteps,
+	"nested-cloud.verify-ready":    buildNestedCloudVerifyReadySteps,
 }
 
 func buildHardeningApplySteps(payload json.RawMessage) ([]Step, error) {
@@ -830,6 +835,265 @@ func buildProvisioningNetworkSteps() ([]Step, error) {
 		"forceAptIPv4": true,
 		"optimizeNICSettings": true
 	}`))
+}
+
+const nestedCloudInstallResultMarker = "PMX_NESTED_CLOUD_INSTALL_RESULT"
+
+type nestedCloudCommandParams struct {
+	outerProxmoxVmid int
+	privateCidr      string
+	gateway          string
+	dnsServers       []string
+	adminURL         string
+	resultMarker     string
+}
+
+func buildNestedCloudInstallProxmoxSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readNestedCloudCommandParams(payload, true, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return []Step{
+		nestedCloudGuestPingStep(params.outerProxmoxVmid),
+		{
+			Name:    "nested-cloud-install-proxmox",
+			Command: nestedCloudGuestExecCommand(params.outerProxmoxVmid, nestedCloudInstallProxmoxScript(params), 1800),
+		},
+	}, nil
+}
+
+func buildNestedCloudConfigureNatSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readNestedCloudCommandParams(payload, true, false)
+	if err != nil {
+		return nil, err
+	}
+
+	return []Step{
+		nestedCloudGuestPingStep(params.outerProxmoxVmid),
+		{
+			Name:    "nested-cloud-configure-nat",
+			Command: nestedCloudGuestExecCommand(params.outerProxmoxVmid, nestedCloudConfigureNatScript(params), 900),
+		},
+	}, nil
+}
+
+func buildNestedCloudVerifyReadySteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readNestedCloudCommandParams(payload, false, true)
+	if err != nil {
+		return nil, err
+	}
+
+	return []Step{
+		nestedCloudGuestPingStep(params.outerProxmoxVmid),
+		{
+			Name:    "nested-cloud-verify-ready",
+			Command: nestedCloudGuestExecCommand(params.outerProxmoxVmid, nestedCloudVerifyReadyScript(params), 120),
+		},
+	}, nil
+}
+
+func readNestedCloudCommandParams(
+	payload json.RawMessage,
+	requireNetwork bool,
+	requireAdminURL bool,
+) (nestedCloudCommandParams, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nestedCloudCommandParams{}, err
+	}
+
+	vmid := intParam(params, "outerProxmoxVmid", intParam(params, "vmid", 0))
+	if vmid <= 0 {
+		return nestedCloudCommandParams{}, fmt.Errorf("outerProxmoxVmid is required")
+	}
+
+	if nestedCloudID := stringParam(params, "nestedCloudId", ""); nestedCloudID != "" && !isSafeToken(nestedCloudID) {
+		return nestedCloudCommandParams{}, fmt.Errorf("nestedCloudId contains unsafe characters")
+	}
+	if outerVMID := stringParam(params, "outerVmId", ""); outerVMID != "" && !isSafeToken(outerVMID) {
+		return nestedCloudCommandParams{}, fmt.Errorf("outerVmId contains unsafe characters")
+	}
+
+	result := nestedCloudCommandParams{
+		outerProxmoxVmid: vmid,
+		dnsServers:       []string{"1.1.1.1", "8.8.8.8"},
+		resultMarker:     stringParam(params, "resultMarker", nestedCloudInstallResultMarker),
+	}
+	if !isSafeToken(result.resultMarker) {
+		return nestedCloudCommandParams{}, fmt.Errorf("resultMarker contains unsafe characters")
+	}
+
+	if requireNetwork {
+		privateCidr := stringParam(params, "privateCidr", "")
+		if err := validateIPv4Cidr(privateCidr, "privateCidr"); err != nil {
+			return nestedCloudCommandParams{}, err
+		}
+		gateway := stringParam(params, "gateway", "")
+		if err := validateIPv4Address(gateway, "gateway"); err != nil {
+			return nestedCloudCommandParams{}, err
+		}
+		dnsServers := stringSliceParam(params, "dnsServers")
+		if len(dnsServers) > 0 {
+			for _, server := range dnsServers {
+				if err := validateIPv4Address(server, "dnsServers"); err != nil {
+					return nestedCloudCommandParams{}, err
+				}
+			}
+			result.dnsServers = dnsServers
+		}
+		result.privateCidr = privateCidr
+		result.gateway = gateway
+	}
+
+	if requireAdminURL {
+		adminURL := stringParam(params, "adminUrl", "")
+		if adminURL == "" || strings.ContainsAny(adminURL, "\n\r") {
+			return nestedCloudCommandParams{}, fmt.Errorf("adminUrl is required")
+		}
+		result.adminURL = adminURL
+	}
+
+	return result, nil
+}
+
+func nestedCloudGuestPingStep(vmid int) Step {
+	return Step{
+		Name:    "nested-cloud-guest-agent-ready",
+		Command: fmt.Sprintf("qm guest ping %s", shellQuote(strconv.Itoa(vmid))),
+	}
+}
+
+func nestedCloudGuestExecCommand(vmid int, script string, timeoutSeconds int) string {
+	return fmt.Sprintf(
+		"qm guest exec %s --timeout %d --synchronous 1 -- bash -lc %s",
+		shellQuote(strconv.Itoa(vmid)),
+		timeoutSeconds,
+		shellQuote(script),
+	)
+}
+
+func nestedCloudInstallProxmoxScript(params nestedCloudCommandParams) string {
+	return joinScript(
+		"set -euo pipefail",
+		"export DEBIAN_FRONTEND=noninteractive",
+		shellAssign("PMX_GATEWAY", params.gateway),
+		shellAssign("PMX_RESULT_MARKER", params.resultMarker),
+		"PMX_TOKEN_NAME='pmx-cloud'",
+		"PMX_TOKEN_ID='root@pam!pmx-cloud'",
+		"if ! test -f /etc/debian_version; then echo 'nested cloud bootstrap requires a Debian-based guest' >&2; exit 1; fi",
+		"admin_ip=\"$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i=1;i<=NF;i++) if ($i==\"src\") {print $(i+1); exit}}')\"",
+		"if [ -z \"${admin_ip:-}\" ]; then admin_ip=\"$(hostname -I 2>/dev/null | awk '{print $1}')\"; fi",
+		"if [ -z \"${admin_ip:-}\" ]; then admin_ip=\"$PMX_GATEWAY\"; fi",
+		"short_host=\"$(hostname -s 2>/dev/null || hostname)\"",
+		"fqdn=\"$(hostname -f 2>/dev/null || hostname)\"",
+		"if ! grep -q \" $short_host\" /etc/hosts 2>/dev/null; then printf '%s %s %s\\n' \"$admin_ip\" \"$fqdn\" \"$short_host\" >> /etc/hosts; fi",
+		"codename=\"$(. /etc/os-release && printf '%s' \"${VERSION_CODENAME:-bookworm}\")\"",
+		"if ! command -v pveversion >/dev/null 2>&1; then",
+		"  apt-get update",
+		"  DEBIAN_FRONTEND=noninteractive apt-get install -y curl gnupg ca-certificates debconf-utils",
+		"  curl -fsSL \"https://enterprise.proxmox.com/debian/proxmox-release-${codename}.gpg\" -o \"/etc/apt/trusted.gpg.d/proxmox-release-${codename}.gpg\" || true",
+		"  printf 'deb http://download.proxmox.com/debian/pve %s pve-no-subscription\\n' \"$codename\" > /etc/apt/sources.list.d/pve-install-repo.list",
+		"  printf 'postfix postfix/mailname string %s\\npostfix postfix/main_mailer_type string Local only\\n' \"$fqdn\" | debconf-set-selections || true",
+		"  apt-get update",
+		"  DEBIAN_FRONTEND=noninteractive apt-get install -y proxmox-ve postfix open-iscsi chrony qemu-guest-agent",
+		"fi",
+		"systemctl enable --now pvedaemon pveproxy pvestatd qemu-guest-agent || true",
+		"pveum user token remove root@pam \"$PMX_TOKEN_NAME\" >/dev/null 2>&1 || true",
+		"token_json=\"$(pveum user token add root@pam \"$PMX_TOKEN_NAME\" --privsep 0 --output-format json)\"",
+		"token_secret=\"$(printf '%s' \"$token_json\" | sed -n 's/.*\"value\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p')\"",
+		"if [ -z \"${token_secret:-}\" ]; then echo 'failed to create Proxmox API token' >&2; exit 1; fi",
+		"printf '%s={\"adminUrl\":\"https://%s:8006\",\"apiTokenId\":\"%s\",\"apiTokenSecret\":\"%s\"}\\n' \"$PMX_RESULT_MARKER\" \"$admin_ip\" \"$PMX_TOKEN_ID\" \"$token_secret\"",
+	)
+}
+
+func nestedCloudConfigureNatScript(params nestedCloudCommandParams) string {
+	return joinScript(
+		"set -euo pipefail",
+		"export DEBIAN_FRONTEND=noninteractive",
+		shellAssign("PMX_PRIVATE_CIDR", params.privateCidr),
+		shellAssign("PMX_GATEWAY", params.gateway),
+		shellAssign("PMX_DNS_SERVERS", strings.Join(params.dnsServers, ",")),
+		"prefix=\"${PMX_PRIVATE_CIDR#*/}\"",
+		"gateway_with_prefix=\"${PMX_GATEWAY}/${prefix}\"",
+		"wan_if=\"$(ip -4 route list default | awk '{print $5; exit}')\"",
+		"if [ -z \"${wan_if:-}\" ]; then echo 'default route interface not found' >&2; exit 1; fi",
+		"apt-get update",
+		"DEBIAN_FRONTEND=noninteractive apt-get install -y ifupdown2 bridge-utils iptables-persistent dnsmasq",
+		"printf '%s\\n' 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-pmx-nested-cloud-nat.conf",
+		"sysctl -w net.ipv4.ip_forward=1",
+		"mkdir -p /etc/network/interfaces.d",
+		"cat > /etc/network/interfaces.d/pmx-nested-cloud.cfg <<EOF\n"+
+			"auto vmbr0\n"+
+			"iface vmbr0 inet static\n"+
+			"    address ${gateway_with_prefix}\n"+
+			"    bridge-ports none\n"+
+			"    bridge-stp off\n"+
+			"    bridge-fd 0\n"+
+			"    post-up iptables -t nat -C POSTROUTING -s ${PMX_PRIVATE_CIDR} -o ${wan_if} -j MASQUERADE || iptables -t nat -A POSTROUTING -s ${PMX_PRIVATE_CIDR} -o ${wan_if} -j MASQUERADE\n"+
+			"    post-down iptables -t nat -D POSTROUTING -s ${PMX_PRIVATE_CIDR} -o ${wan_if} -j MASQUERADE || true\n"+
+			"EOF",
+		"if command -v ifreload >/dev/null 2>&1; then ifreload -a; else systemctl restart networking || true; fi",
+		"iptables -t nat -C POSTROUTING -s \"$PMX_PRIVATE_CIDR\" -o \"$wan_if\" -j MASQUERADE || iptables -t nat -A POSTROUTING -s \"$PMX_PRIVATE_CIDR\" -o \"$wan_if\" -j MASQUERADE",
+		"netfilter-persistent save || true",
+		"dhcp_base=\"$(printf '%s\\n' \"$PMX_GATEWAY\" | awk -F. '{print $1\".\"$2\".\"$3}')\"",
+		"cat > /etc/dnsmasq.d/pmx-nested-cloud.conf <<EOF\n"+
+			"interface=vmbr0\n"+
+			"bind-interfaces\n"+
+			"dhcp-range=${dhcp_base}.100,${dhcp_base}.199,12h\n"+
+			"dhcp-option=3,${PMX_GATEWAY}\n"+
+			"dhcp-option=6,${PMX_DNS_SERVERS}\n"+
+			"EOF",
+		"systemctl enable --now dnsmasq",
+		"systemctl restart dnsmasq",
+	)
+}
+
+func nestedCloudVerifyReadyScript(params nestedCloudCommandParams) string {
+	return joinScript(
+		"set -euo pipefail",
+		shellAssign("PMX_ADMIN_URL", params.adminURL),
+		"pveversion",
+		"systemctl is-active --quiet pveproxy",
+		"curl -kfsS https://127.0.0.1:8006/api2/json/version >/dev/null",
+		"printf 'nested cloud ready at %s\\n' \"$PMX_ADMIN_URL\"",
+	)
+}
+
+func validateIPv4Cidr(value string, key string) error {
+	if value == "" {
+		return fmt.Errorf("%s is required", key)
+	}
+	prefix, err := netip.ParsePrefix(value)
+	if err != nil || !prefix.Addr().Is4() {
+		return fmt.Errorf("%s must be an IPv4 CIDR", key)
+	}
+	return nil
+}
+
+func validateIPv4Address(value string, key string) error {
+	if value == "" {
+		return fmt.Errorf("%s is required", key)
+	}
+	address, err := netip.ParseAddr(value)
+	if err != nil || !address.Is4() {
+		return fmt.Errorf("%s must be an IPv4 address", key)
+	}
+	return nil
+}
+
+func shellAssign(name string, value string) string {
+	return fmt.Sprintf("%s=%s", name, shellQuote(value))
+}
+
+func joinScript(lines ...string) string {
+	filtered := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if strings.TrimSpace(line) != "" {
+			filtered = append(filtered, line)
+		}
+	}
+	return strings.Join(filtered, "\n")
 }
 
 func buildNvidiaDriverInstallSteps(_ json.RawMessage) ([]Step, error) {
