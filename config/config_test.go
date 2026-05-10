@@ -17,7 +17,7 @@ func TestValidateRequiresWebSocketServerURL(t *testing.T) {
 func TestValidateAcceptsSecureWebSocketServerURL(t *testing.T) {
 	cfg := &Config{
 		Token:     "pmx_test_token",
-		ServerURL: "wss://ws.pmxcloud.cloud/ws/agent",
+		ServerURL: "wss://backend.pmxcloud.cloud/ws/agent",
 		DataDir:   "/var/lib/pmx-cloud",
 	}
 

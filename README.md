@@ -38,7 +38,7 @@ Use the infra installer with a verified local binary:
 ```bash
 sudo ./Infra/scripts/install-agent.sh \
   --token=pmx_xxx \
-  --server-url=wss://ws.pmxcloud.cloud/ws/agent \
+  --server-url=wss://backend.pmxcloud.cloud/ws/agent \
   --binary-path=./agent/dist/pmx-cloud-agent-0.1.0-linux-amd64
 ```
 
@@ -47,7 +47,7 @@ Or install from a release URL with a required checksum:
 ```bash
 sudo ./Infra/scripts/install-agent.sh \
   --token=pmx_xxx \
-  --server-url=wss://ws.pmxcloud.cloud/ws/agent \
+  --server-url=wss://backend.pmxcloud.cloud/ws/agent \
   --binary-url=https://releases.pmxcloud.cloud/agent/0.1.0/pmx-cloud-agent-0.1.0-linux-amd64 \
   --binary-sha256=<expected_sha256>
 ```
@@ -89,7 +89,7 @@ Use a verified local binary first, and install without starting the service:
 ```bash
 sudo ./Infra/scripts/install-agent.sh \
   --token=pmx_xxx \
-  --server-url=wss://ws.pmxcloud.cloud/ws/agent \
+  --server-url=wss://backend.pmxcloud.cloud/ws/agent \
   --binary-path=./agent/dist/pmx-cloud-agent-0.1.0-linux-amd64 \
   --no-start
 ```

@@ -128,7 +128,7 @@ func TestRunPreflightCreatesIdentityAndWireGuardKeys(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "agent.conf")
 	cfg := config.Config{
 		Token:     "pmx_test_token",
-		ServerURL: "wss://ws.pmxcloud.cloud/ws/agent",
+		ServerURL: "wss://backend.pmxcloud.cloud/ws/agent",
 		DataDir:   dataDir,
 	}
 	if err := cfg.Save(configPath); err != nil {

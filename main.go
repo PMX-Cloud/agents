@@ -824,7 +824,7 @@ func runSetup() error {
 	fmt.Println("2. Create /etc/pmx-cloud/agent.conf with your configuration:")
 	fmt.Println()
 	fmt.Println("   token = YOUR_LICENSE_TOKEN")
-	fmt.Println("   server_url = wss://ws.pmxcloud.cloud/ws/agent")
+	fmt.Println("   server_url = wss://backend.pmxcloud.cloud/ws/agent")
 	fmt.Println("   data_dir = /var/lib/pmx-cloud")
 	fmt.Println()
 	fmt.Println("3. Start the agent: pmx-cloud-agent")

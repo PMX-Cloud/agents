@@ -13,7 +13,7 @@
 # Example:
 #   sudo bash install-agent.sh \
 #     --token=pmx_xxx \
-#     --server-url=wss://ws.pmxcloud.cloud/ws/agent \
+#     --server-url=wss://backend.pmxcloud.cloud/ws/agent \
 #     --binary-url=https://github.com/PMX-Cloud/agents/releases/download/v0.1.0/pmx-cloud-agent-0.1.0-linux-amd64 \
 #     --binary-sha256=<sha256-from-release>
 #
@@ -25,7 +25,7 @@ CONFIG_PATH="${CONFIG_DIR}/agent.conf"
 DATA_DIR="/var/lib/pmx-cloud"
 INSTALL_PATH="/usr/local/bin/pmx-cloud-agent"
 SERVICE_PATH="/etc/systemd/system/pmx-cloud-agent.service"
-DEFAULT_SERVER_URL="wss://ws.pmxcloud.cloud/ws/agent"
+DEFAULT_SERVER_URL="wss://backend.pmxcloud.cloud/ws/agent"
 
 TOKEN="${PMX_CLOUD_TOKEN:-}"
 SERVER_URL="${PMX_CLOUD_SERVER_URL:-$DEFAULT_SERVER_URL}"

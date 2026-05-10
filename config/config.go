@@ -14,7 +14,7 @@ import (
 )
 
 const (
-	DefaultServerURL = "wss://ws.pmxcloud.cloud/ws/agent"
+	DefaultServerURL = "wss://backend.pmxcloud.cloud/ws/agent"
 	DefaultDataDir   = "/var/lib/pmx-cloud"
 )
 
