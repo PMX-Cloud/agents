@@ -205,9 +205,16 @@ var commandBuilders = map[string]commandBuilder{
 	"coral.tpu.install":            buildCoralTpuInstallSteps,
 	"coral.tpu.attach":             buildCoralTpuAttachSteps,
 	"sriov.configure":              buildSriovConfigureSteps,
+	"gpu.attach.lxc":               buildLxcGpuAttachSteps,
 	"lxc.mount":                    buildLxcMountSteps,
+	"nfs.share.create":             buildNfsShareCreateSteps,
+	"samba.share.create":           buildSambaShareCreateSteps,
 	"provisioning.apply":           buildProvisioningApplySteps,
 	"community-script.run":         buildCommunityScriptRunSteps,
+	"agent.scripts.sync":           buildAgentScriptsSyncSteps,
+	"hardware.detect":              buildHardwareDetectSteps,
+	"disk.inventory":               buildDiskInventorySteps,
+	"zfs.status":                   buildZfsStatusSteps,
 	"zfs.tune":                     buildZfsTuneSteps,
 	"log2ram.install":              buildLog2RamInstallSteps,
 	"ovs.install":                  buildOvsInstallSteps,
@@ -1192,6 +1199,62 @@ func buildSriovConfigureSteps(payload json.RawMessage) ([]Step, error) {
 	}}, nil
 }
 
+func buildLxcGpuAttachSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	ctID, err := requiredSafeTokenAny(params, "ctId", "containerId", "targetId")
+	if err != nil {
+		return nil, err
+	}
+	gpuType, err := requiredSafeToken(params, "type")
+	if err != nil {
+		return nil, err
+	}
+	if !oneOf(gpuType, "nvidia", "intel", "amd") {
+		return nil, fmt.Errorf("type must be nvidia, intel, or amd")
+	}
+	if pciID := stringParam(params, "pciId", ""); pciID != "" {
+		if _, err := requiredPciID(params, "pciId"); err != nil {
+			return nil, err
+		}
+	}
+
+	configPath := fmt.Sprintf("/etc/pve/lxc/%s.conf", ctID)
+	var lines []string
+	switch gpuType {
+	case "nvidia":
+		lines = []string{
+			"lxc.cgroup2.devices.allow: c 195:* rwm",
+			"lxc.cgroup2.devices.allow: c 511:* rwm",
+			"lxc.mount.entry: /dev/nvidia0 dev/nvidia0 none bind,optional,create=file 0 0",
+			"lxc.mount.entry: /dev/nvidiactl dev/nvidiactl none bind,optional,create=file 0 0",
+			"lxc.mount.entry: /dev/nvidia-uvm dev/nvidia-uvm none bind,optional,create=file 0 0",
+		}
+	default:
+		lines = []string{
+			"lxc.cgroup2.devices.allow: c 226:* rwm",
+			"lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir 0 0",
+		}
+	}
+
+	commands := []string{
+		fmt.Sprintf("test -f %s", shellQuote(configPath)),
+	}
+	for _, line := range lines {
+		commands = append(
+			commands,
+			fmt.Sprintf("grep -Fqx %s %s || printf '%%s\\n' %s >> %s", shellQuote(line), shellQuote(configPath), shellQuote(line), shellQuote(configPath)),
+		)
+	}
+
+	return []Step{{
+		Name:    "lxc-gpu-attach",
+		Command: joinShell(commands...),
+	}}, nil
+}
+
 func buildLxcMountSteps(payload json.RawMessage) ([]Step, error) {
 	params, err := readObject(payload)
 	if err != nil {
@@ -1223,6 +1286,102 @@ func buildLxcMountSteps(payload json.RawMessage) ([]Step, error) {
 		Command: joinShell(
 			fmt.Sprintf("mkdir -p %s", shellQuote(hostPath)),
 			fmt.Sprintf("pct set %s -%s %s", shellQuote(ctID), slot, shellQuote(options)),
+		),
+	}}, nil
+}
+
+func buildNfsShareCreateSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	path, err := requiredAbsolutePath(params, "path")
+	if err != nil {
+		return nil, err
+	}
+	clients := stringSliceParam(params, "clients")
+	if len(clients) == 0 {
+		return nil, fmt.Errorf("clients must be a non-empty array")
+	}
+	options := normalizeShareOptions(stringSliceParam(params, "options"), []string{"rw", "sync", "no_subtree_check"})
+	clientEntries := make([]string, 0, len(clients))
+	for _, client := range clients {
+		normalizedClient, err := normalizeNfsClient(client)
+		if err != nil {
+			return nil, err
+		}
+		clientEntries = append(clientEntries, fmt.Sprintf("%s(%s)", normalizedClient, strings.Join(options, ",")))
+	}
+	exportLine := fmt.Sprintf("%s %s", path, strings.Join(clientEntries, " "))
+
+	return []Step{{
+		Name: "nfs-share-create",
+		Command: joinShell(
+			"apt-get update",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y nfs-kernel-server",
+			fmt.Sprintf("mkdir -p %s", shellQuote(path)),
+			"touch /etc/exports",
+			"if [ ! -f /etc/exports.pmx-cloud.bak ]; then cp /etc/exports /etc/exports.pmx-cloud.bak; fi",
+			fmt.Sprintf("grep -Fqx %s /etc/exports || printf '%%s\\n' %s >> /etc/exports", shellQuote(exportLine), shellQuote(exportLine)),
+			"exportfs -ra",
+			"(systemctl enable --now nfs-server || systemctl enable --now nfs-kernel-server)",
+		),
+	}}, nil
+}
+
+func buildSambaShareCreateSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	path, err := requiredAbsolutePath(params, "path")
+	if err != nil {
+		return nil, err
+	}
+	shareName, err := requiredSafeTokenAny(params, "shareName", "name")
+	if err != nil {
+		return nil, err
+	}
+	users := stringSliceParam(params, "users")
+	for _, user := range users {
+		if !isSafeToken(user) {
+			return nil, fmt.Errorf("users must contain safe account names")
+		}
+	}
+	readOnly := "no"
+	if boolParam(params, "readOnly") {
+		readOnly = "yes"
+	}
+	validUsersLine := ""
+	if len(users) > 0 {
+		validUsersLine = fmt.Sprintf("  valid users = %s", strings.Join(users, " "))
+	}
+	block := strings.Join([]string{
+		fmt.Sprintf("# BEGIN pmx-cloud share %s", shareName),
+		fmt.Sprintf("[%s]", shareName),
+		fmt.Sprintf("  path = %s", path),
+		"  browseable = yes",
+		fmt.Sprintf("  read only = %s", readOnly),
+		"  guest ok = no",
+		validUsersLine,
+		fmt.Sprintf("# END pmx-cloud share %s", shareName),
+	}, "\n")
+
+	return []Step{{
+		Name: "samba-share-create",
+		Command: joinShell(
+			"apt-get update",
+			"DEBIAN_FRONTEND=noninteractive apt-get install -y samba",
+			fmt.Sprintf("mkdir -p %s", shellQuote(path)),
+			"touch /etc/samba/smb.conf",
+			"if [ ! -f /etc/samba/smb.conf.pmx-cloud.bak ]; then cp /etc/samba/smb.conf /etc/samba/smb.conf.pmx-cloud.bak; fi",
+			"tmp=$(mktemp)",
+			fmt.Sprintf("sed %s /etc/samba/smb.conf > \"$tmp\" || cp /etc/samba/smb.conf \"$tmp\"", shellQuote(fmt.Sprintf("/# BEGIN pmx-cloud share %s/,/# END pmx-cloud share %s/d", shareName, shareName))),
+			fmt.Sprintf("printf '\\n%%s\\n' %s >> \"$tmp\"", shellQuote(block)),
+			"mv \"$tmp\" /etc/samba/smb.conf",
+			"testparm -s",
+			"systemctl enable --now smbd",
+			"(systemctl reload smbd || systemctl restart smbd)",
 		),
 	}}, nil
 }
@@ -1267,6 +1426,147 @@ func buildCommunityScriptRunSteps(payload json.RawMessage) ([]Step, error) {
 			"chmod 700 \"$tmp\"",
 			"bash \"$tmp\"",
 			"rm -f \"$tmp\"",
+		),
+	}}, nil
+}
+
+func buildAgentScriptsSyncSteps(payload json.RawMessage) ([]Step, error) {
+	params, err := readObject(payload)
+	if err != nil {
+		return nil, err
+	}
+	cachePath := stringParam(params, "cachePath", "/var/lib/pmxcloud/scripts")
+	if _, err := requiredAbsolutePathValue(cachePath, "cachePath"); err != nil {
+		return nil, err
+	}
+	if !strings.HasPrefix(cachePath, "/var/lib/pmxcloud/") && !strings.HasPrefix(cachePath, "/opt/pmxcloud/") {
+		return nil, fmt.Errorf("cachePath must be inside /var/lib/pmxcloud or /opt/pmxcloud")
+	}
+
+	commands := []string{
+		fmt.Sprintf("install -d -m 0700 %s", shellQuote(cachePath)),
+	}
+
+	rawScripts, _ := params["scripts"].([]any)
+	manifestURL := stringParam(params, "manifestUrl", "")
+	if len(rawScripts) == 0 && manifestURL == "" {
+		if boolParam(params, "offlineMode") {
+			return []Step{{
+				Name: "agent-scripts-sync",
+				Command: joinShell(
+					commands[0],
+					fmt.Sprintf("test -f %s || test -f %s", shellQuote(filepathJoin(cachePath, "manifest.json")), shellQuote(filepathJoin(cachePath, "manifest.txt"))),
+				),
+			}}, nil
+		}
+		return nil, fmt.Errorf("agent.scripts.sync requires scripts, manifestUrl, or offlineMode=true")
+	}
+
+	if manifestURL != "" {
+		if !isHTTPURL(manifestURL) {
+			return nil, fmt.Errorf("manifestUrl must be http or https")
+		}
+		commands = append(
+			commands,
+			fmt.Sprintf("curl -fsSL %s -o %s", shellQuote(manifestURL), shellQuote(filepathJoin(cachePath, "manifest.json"))),
+		)
+	}
+
+	for _, raw := range rawScripts {
+		script, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("scripts must contain objects")
+		}
+		id, err := requiredSafeToken(script, "id")
+		if err != nil {
+			return nil, err
+		}
+		version := stringParam(script, "version", "latest")
+		if !isSafeToken(version) {
+			return nil, fmt.Errorf("version contains unsafe characters")
+		}
+		url := stringParam(script, "url", "")
+		if !isHTTPURL(url) {
+			return nil, fmt.Errorf("script url must be http or https")
+		}
+		checksum := stringParam(script, "checksum", "")
+		if checksum != "" && !isHexChecksum(checksum) {
+			return nil, fmt.Errorf("checksum must be a sha256 hex string")
+		}
+		target := filepathJoin(cachePath, fmt.Sprintf("%s-%s.sh", id, version))
+		commands = append(commands, fmt.Sprintf("curl -fsSL %s -o %s", shellQuote(url), shellQuote(target)))
+		if checksum != "" {
+			commands = append(commands, fmt.Sprintf("printf '%%s  %%s\\n' %s %s | sha256sum -c -", shellQuote(checksum), shellQuote(target)))
+		}
+		commands = append(commands, fmt.Sprintf("chmod 700 %s", shellQuote(target)))
+	}
+	commands = append(commands, fmt.Sprintf("find %s -maxdepth 1 -type f -name '*.sh' -printf '%%f\\n' | sort > %s", shellQuote(cachePath), shellQuote(filepathJoin(cachePath, "manifest.txt"))))
+
+	return []Step{{
+		Name:    "agent-scripts-sync",
+		Command: joinShell(commands...),
+	}}, nil
+}
+
+func buildHardwareDetectSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{
+		{
+			Name: "hardware-cpu-memory",
+			Command: joinShell(
+				"if command -v lscpu >/dev/null 2>&1; then lscpu -J; else lscpu; fi",
+				"if command -v dmidecode >/dev/null 2>&1; then dmidecode -t processor -t memory || true; fi",
+			),
+		},
+		{
+			Name: "hardware-pci",
+			Command: joinShell(
+				"if command -v lspci >/dev/null 2>&1; then lspci -Dnnk; else printf '%s\\n' 'lspci=missing'; fi",
+				"if command -v lspci >/dev/null 2>&1; then lspci -Dvv | grep -E '^[0-9a-fA-F:.]+|LnkSta:|LnkCap:' || true; fi",
+			),
+		},
+		{
+			Name: "hardware-nvme",
+			Command: joinShell(
+				"if command -v nvme >/dev/null 2>&1; then nvme list -o json || nvme list; else printf '%s\\n' 'nvme=missing'; fi",
+				"lsblk -J -O",
+			),
+		},
+		{
+			Name:    "hardware-sriov",
+			Command: "for dev in /sys/bus/pci/devices/*; do if [ -f \"$dev/sriov_totalvfs\" ]; then printf '%s total=%s enabled=%s driver=%s\\n' \"${dev##*/}\" \"$(cat \"$dev/sriov_totalvfs\")\" \"$(cat \"$dev/sriov_numvfs\" 2>/dev/null || printf 0)\" \"$(basename \"$(readlink -f \"$dev/driver\" 2>/dev/null)\" 2>/dev/null || true)\"; fi; done",
+		},
+	}, nil
+}
+
+func buildDiskInventorySteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{
+		{
+			Name: "disk-block-inventory",
+			Command: joinShell(
+				"lsblk -J -O",
+				"findmnt -J || true",
+			),
+		},
+		{
+			Name: "disk-safety-signals",
+			Command: joinShell(
+				"if command -v pvs >/dev/null 2>&1; then pvs --reportformat json || true; fi",
+				"if command -v vgs >/dev/null 2>&1; then vgs --reportformat json || true; fi",
+				"if command -v lvs >/dev/null 2>&1; then lvs --reportformat json || true; fi",
+				"if command -v zpool >/dev/null 2>&1; then zpool status || true; fi",
+				"if command -v mdadm >/dev/null 2>&1; then mdadm --detail --scan || true; fi",
+			),
+		},
+	}, nil
+}
+
+func buildZfsStatusSteps(_ json.RawMessage) ([]Step, error) {
+	return []Step{{
+		Name: "zfs-status",
+		Command: joinShell(
+			"command -v zpool >/dev/null",
+			"zpool status -j || zpool status",
+			"zpool list -Hp",
 		),
 	}}, nil
 }
@@ -1781,6 +2081,60 @@ func requiredPciID(params map[string]any, key string) (string, error) {
 		}
 	}
 	return value, nil
+}
+
+func normalizeShareOptions(options []string, fallback []string) []string {
+	if len(options) == 0 {
+		return append([]string{}, fallback...)
+	}
+	normalized := make([]string, 0, len(options))
+	seen := map[string]bool{}
+	for _, option := range options {
+		if !isSafeToken(option) || strings.Contains(option, "/") {
+			continue
+		}
+		if !seen[option] {
+			normalized = append(normalized, option)
+			seen[option] = true
+		}
+	}
+	if len(normalized) == 0 {
+		return append([]string{}, fallback...)
+	}
+	return normalized
+}
+
+func normalizeNfsClient(client string) (string, error) {
+	normalized := strings.TrimSpace(client)
+	if normalized == "" {
+		return "", fmt.Errorf("clients must not contain empty values")
+	}
+	for _, char := range normalized {
+		if !(char == '.' || char == ':' || char == '/' || char == '-' || char == '_' || char == '*' || isAlphaNum(char)) {
+			return "", fmt.Errorf("clients contain unsafe characters")
+		}
+	}
+	return normalized, nil
+}
+
+func isHTTPURL(value string) bool {
+	return strings.HasPrefix(value, "https://") || strings.HasPrefix(value, "http://")
+}
+
+func isHexChecksum(value string) bool {
+	if len(value) != 64 {
+		return false
+	}
+	for _, char := range value {
+		if !((char >= 'a' && char <= 'f') || (char >= 'A' && char <= 'F') || (char >= '0' && char <= '9')) {
+			return false
+		}
+	}
+	return true
+}
+
+func filepathJoin(base string, name string) string {
+	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(name, "/")
 }
 
 func isSafeToken(value string) bool {
