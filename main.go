@@ -36,10 +36,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/AraaRashek/pmx-cloud/agent/commands"
-	"github.com/AraaRashek/pmx-cloud/agent/config"
-	"github.com/AraaRashek/pmx-cloud/agent/wgtunnel"
-	"github.com/AraaRashek/pmx-cloud/agent/wsclient"
+	"github.com/PMX-Cloud/agents/commands"
+	"github.com/PMX-Cloud/agents/config"
+	"github.com/PMX-Cloud/agents/wgtunnel"
+	"github.com/PMX-Cloud/agents/wsclient"
 )
 
 const (

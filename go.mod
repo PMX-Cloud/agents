@@ -1,4 +1,4 @@
-module github.com/AraaRashek/pmx-cloud/agent
+module github.com/PMX-Cloud/agents
 
 go 1.26.3
 

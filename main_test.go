@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/AraaRashek/pmx-cloud/agent/commands"
-	"github.com/AraaRashek/pmx-cloud/agent/config"
+	"github.com/PMX-Cloud/agents/commands"
+	"github.com/PMX-Cloud/agents/config"
 )
 
 func TestNormalizeSHA256HashAcceptsRawAndPrefixedHex(t *testing.T) {
