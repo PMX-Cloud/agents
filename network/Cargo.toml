@@ -1,0 +1,38 @@
+[package]
+name = "pmx-network"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.76"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_cbor = "0.11"
+serde_bytes = "0.11"
+toml = "0.8"
+ed25519-dalek = "2"
+nftables = "0.3"
+clap = { version = "4", features = ["derive"] }
+zeroize = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+tracing-journald = "0.3"
+anyhow = "1"
+thiserror = "1"
+chrono = { version = "0.4", features = ["serde"] }
+futures-util = "0.3"
+async-trait = "0.1"
+base64 = "0.22"
+rand = "0.8"
+pmx-agents-shared = { path = "../shared-rust" }
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
