@@ -1,0 +1,31 @@
+{
+  "name": "cis-debian-level1",
+  "controls": [
+    {
+      "id": "CIS-SSH-001",
+      "description": "PasswordAuthentication should be disabled",
+      "check_type": "file_not_contains",
+      "path": "/etc/ssh/sshd_config",
+      "pattern": "PasswordAuthentication yes"
+    },
+    {
+      "id": "CIS-SSH-002",
+      "description": "PermitRootLogin should not be yes",
+      "check_type": "file_not_contains",
+      "path": "/etc/ssh/sshd_config",
+      "pattern": "PermitRootLogin yes"
+    },
+    {
+      "id": "CIS-RPCBIND-001",
+      "description": "rpcbind should be disabled",
+      "check_type": "command_exit_nonzero",
+      "command": ["/bin/systemctl", "is-enabled", "rpcbind.service"]
+    },
+    {
+      "id": "CIS-AUDITD-001",
+      "description": "auditd should be enabled",
+      "check_type": "command_exit_zero",
+      "command": ["/bin/systemctl", "is-enabled", "auditd.service"]
+    }
+  ]
+}

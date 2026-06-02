@@ -1,0 +1,25 @@
+# pmx-hypervisor configuration example
+# The installer writes the production copy to /etc/pmx-cloud/pmx-hypervisor.conf
+# overriding: backend.url, identity paths, cert/key paths.
+
+[backend]
+url     = "wss://api.pmxcloud.cloud/ws/agent/hypervisor"
+ca_cert = "/etc/pmx-cloud/backend-ca.crt"
+
+[identity]
+cert = "/etc/pmx-cloud/agents/pmx-hypervisor/client.crt"
+key  = "/etc/pmx-cloud/agents/pmx-hypervisor/client.key"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[proxmox]
+pvesh_path = "/usr/bin/pvesh"
+qm_path    = "/usr/sbin/qm"
+pct_path   = "/usr/sbin/pct"
+pvesm_path = "/usr/sbin/pvesm"
+pvecm_path = "/usr/sbin/pvecm"
+
+[limits]
+max_concurrent_vm_create  = 4
+max_concurrent_migrations = 2
