@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -216,6 +217,16 @@ func run(cfg *hypCfg.Config, log *slog.Logger, kind provider.Kind) error {
 		capabilitiesMap["console"] = caps.Console
 	}
 
+	// Read the canonical host fingerprint provisioned by the installer (and
+	// shared by the other siblings) so the backend keys this agent to the same
+	// node identity. Falls back to a dev placeholder if the file is absent.
+	hostFingerprint := "dev-fingerprint"
+	if raw, err := os.ReadFile("/etc/pmx-cloud/host-fingerprint"); err == nil {
+		if v := strings.TrimSpace(string(raw)); v != "" {
+			hostFingerprint = v
+		}
+	}
+
 	client, err := wsclient.New(wsclient.Config{
 		BackendURL:        cfg.Backend.URL,
 		AgentClass:        agentClass,
@@ -224,7 +235,7 @@ func run(cfg *hypCfg.Config, log *slog.Logger, kind provider.Kind) error {
 		KeyPath:           cfg.Identity.Key,
 		KeySet:            ks,
 		ReplayCache:       cache,
-		HostFingerprint:   "dev-fingerprint",
+		HostFingerprint:   hostFingerprint,
 		HypervisorType:    string(kind),
 		Capabilities:      capabilitiesMap,
 		HeartbeatInterval: 30 * time.Second,

@@ -20,6 +20,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -109,6 +110,15 @@ func run(cfg *telCfg.Config, log *slog.Logger) error {
 		log:      log,
 	}
 
+	// Canonical host fingerprint provisioned by the installer and shared across
+	// siblings, so the backend keys this agent to the same node identity.
+	hostFingerprint := "dev-fingerprint"
+	if raw, err := os.ReadFile("/etc/pmx-cloud/host-fingerprint"); err == nil {
+		if v := strings.TrimSpace(string(raw)); v != "" {
+			hostFingerprint = v
+		}
+	}
+
 	client, err := wsclient.New(wsclient.Config{
 		BackendURL:        cfg.Backend.URL,
 		AgentClass:        agentClass,
@@ -117,7 +127,7 @@ func run(cfg *telCfg.Config, log *slog.Logger) error {
 		KeyPath:           cfg.Identity.Key,
 		KeySet:            ks,
 		ReplayCache:       cache,
-		HostFingerprint:   "dev-fingerprint",
+		HostFingerprint:   hostFingerprint,
 		HeartbeatInterval: 15 * time.Second,
 		HeartbeatTimeout:  45 * time.Second,
 		Handler:           h,
@@ -128,11 +138,10 @@ func run(cfg *telCfg.Config, log *slog.Logger) error {
 		return fmt.Errorf("wsclient init: %w", err)
 	}
 
-	// Wire sender now that we have a client.
-	snd := push.NewSender(ring, func(data []byte) error {
-		// Sends via the WS client. The client exposes a Send method.
-		return nil // real impl calls client.Send(data)
-	}, log)
+	// Wire sender now that we have a client. SendRaw is thread-safe and returns
+	// an error when disconnected; the Sender only calls it while connected and
+	// otherwise buffers in the ring for replay on reconnect.
+	snd := push.NewSender(ring, client.SendRaw, log)
 	*h.sender = snd
 
 	// ── Alert drain goroutine ─────────────────────────────────────────────────
