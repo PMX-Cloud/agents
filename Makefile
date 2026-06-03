@@ -22,6 +22,9 @@ GOARCH            ?= amd64
 VERSION           ?= dev
 COMMIT            ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 SOURCE_DATE_EPOCH ?= 0
+# Default to cargo's real home so the path-prefix remap below is never an empty
+# "--remap-path-prefix==/cargo" (rustc rejects an empty from-prefix).
+CARGO_HOME        ?= $(HOME)/.cargo
 
 build-agents: build-go-agents build-rust-agents
 
