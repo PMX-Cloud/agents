@@ -112,6 +112,7 @@ func run(cfg *telCfg.Config, log *slog.Logger) error {
 	client, err := wsclient.New(wsclient.Config{
 		BackendURL:        cfg.Backend.URL,
 		AgentClass:        agentClass,
+		AuthToken:         cfg.Backend.AuthToken,
 		CertPath:          cfg.Identity.Cert,
 		KeyPath:           cfg.Identity.Key,
 		KeySet:            ks,
