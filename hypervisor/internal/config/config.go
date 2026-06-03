@@ -21,6 +21,10 @@ type Config struct {
 type BackendConfig struct {
 	URL    string `toml:"url"`
 	CACert string `toml:"ca_cert"`
+	// AuthToken is the node enrollment token presented as a bearer credential on
+	// the WS handshake. Used in token-only deployments (no mTLS client cert);
+	// mirrors pmx-core. Optional — empty falls back to mTLS via Identity.Cert.
+	AuthToken string `toml:"auth_token"`
 }
 
 type IdentityConfig struct {
