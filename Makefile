@@ -1,12 +1,49 @@
 # agents/Makefile — builds all PMX-Cloud fleet agents.
 # Run: make -C agents all
 
-.PHONY: all go-shared rust-shared lint test clean
+.PHONY: all go-shared rust-shared lint test clean \
+        build-agents build-go-agents build-rust-agents
 
 GO_SHARED := shared
 RUST_SHARED := shared-rust
 
 all: go-shared rust-shared
+
+# ── Reproducible agent binaries ──────────────────────────────────────────────
+# Builds every deployable agent with the SAME deterministic flags as
+# release.yml, into $(BIN_DIR). Used by reproducible-build-verify.yml to compare
+# a host build against a Docker build. Override VERSION/COMMIT/SOURCE_DATE_EPOCH
+# to pin identical inputs across builders (the verifier passes the same values
+# to both), otherwise reproducibility cannot hold.
+GO_AGENTS   := core telemetry hypervisor storage security backup console-broker hardware-installer
+RUST_AGENTS := network updater
+BIN_DIR           ?= $(CURDIR)/bin
+GOARCH            ?= amd64
+VERSION           ?= dev
+COMMIT            ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+SOURCE_DATE_EPOCH ?= 0
+
+build-agents: build-go-agents build-rust-agents
+
+build-go-agents:
+	@mkdir -p "$(BIN_DIR)"
+	@for a in $(GO_AGENTS); do \
+		echo "==> building pmx-$$a (go/$(GOARCH))"; \
+		( cd "$$a" && GOOS=linux GOARCH=$(GOARCH) CGO_ENABLED=0 go build \
+			-trimpath -buildvcs=false \
+			-ldflags="-s -w -buildid= -X main.Version=$(VERSION) -X main.Commit=$(COMMIT) -X main.BuildDate=$(SOURCE_DATE_EPOCH)" \
+			-o "$(BIN_DIR)/pmx-$$a" "./cmd/pmx-$$a" ) || exit 1; \
+	done
+
+build-rust-agents:
+	@mkdir -p "$(BIN_DIR)"
+	@for a in $(RUST_AGENTS); do \
+		echo "==> building pmx-$$a (rust)"; \
+		( cd "$$a" && SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) \
+			RUSTFLAGS="--remap-path-prefix=$(HOME)=~ --remap-path-prefix=$(CARGO_HOME)=/cargo -C strip=symbols" \
+			cargo build --release --locked ) || exit 1; \
+		cp "$$a/target/release/pmx-$$a" "$(BIN_DIR)/pmx-$$a"; \
+	done
 
 ## Go shared library
 go-shared:
