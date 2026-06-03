@@ -77,8 +77,8 @@ func (c *Config) validate() error {
 	if !strings.HasPrefix(c.Backend.URL, "wss://") {
 		return fmt.Errorf("config: backend.url must start with wss://, got %q", c.Backend.URL)
 	}
-	if c.Identity.Cert == "" || c.Identity.Key == "" {
-		return fmt.Errorf("config: identity.cert and identity.key are required")
+	if (c.Identity.Cert == "" || c.Identity.Key == "") && c.Backend.AuthToken == "" {
+		return fmt.Errorf("config: identity.cert/key or backend.auth_token is required")
 	}
 	if c.Keyset.Path == "" {
 		c.Keyset.Path = "/etc/pmx-cloud/keyset.pub"
