@@ -22,6 +22,7 @@ type Config struct {
 type BackendConfig struct {
 	URL    string `toml:"url"`
 	CACert string `toml:"ca_cert"`
+	AuthToken string `toml:"auth_token"`
 }
 
 type IdentityConfig struct {
