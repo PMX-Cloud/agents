@@ -3,13 +3,12 @@
 package collectors
 
 import (
-	"bufio"
 	"context"
 	"fmt"
-	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -52,41 +51,60 @@ type KernelEvent struct {
 }
 
 func (c *KernelEventsCollector) Collect(ctx context.Context) ([]Metric, error) {
-	f, err := os.Open(c.path)
+	// /dev/kmsg blocks on read once all buffered records are drained (it waits
+	// for the next kernel message). Open O_NONBLOCK and use raw syscall.Read so a
+	// drained device returns EAGAIN instead of wedging the whole collection loop.
+	// (A blocking read here previously hung CollectOnce forever, starving every
+	// other collector and stopping all metric emission.) Each read returns one
+	// kmsg record; stop at EAGAIN/EOF, the line cap, or ctx cancellation.
+	fd, err := syscall.Open(c.path, syscall.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, fmt.Errorf("kernel_events: open %s: %w", c.path, err)
 	}
-	defer f.Close()
+	defer syscall.Close(fd)
 
 	// /dev/kmsg lines: "<priority>,<seq>,<timestamp_us>,-;<message>"
+	// A read on /dev/kmsg returns exactly one record; on a regular file (tests)
+	// it returns a chunk of many newline-separated lines. Split on "\n" so both
+	// behave the same.
 	var metrics []Metric
-	scanner := bufio.NewScanner(f)
-	// Non-blocking read: set deadline via context.
-	if dl, ok := ctx.Deadline(); ok {
-		_ = dl // advisory only for this scanner approach
-	}
-
+	buf := make([]byte, 8192)
 	lineCount := 0
-	for scanner.Scan() {
-		lineCount++
-		if lineCount > 4096 { // cap to avoid blocking forever
+	for lineCount < 4096 {
+		if ctx.Err() != nil {
 			break
 		}
-		line := scanner.Text()
-		msg := parseKmsgMessage(line)
-		if msg == "" {
-			continue
+		n, rerr := syscall.Read(fd, buf)
+		if rerr != nil {
+			// EAGAIN/EWOULDBLOCK => no more pending records (device drained).
+			break
 		}
-		ts := parseKmsgTimestamp(line)
-		for _, p := range eventPatterns {
-			if p.re.MatchString(msg) {
-				metrics = append(metrics, Metric{
-					Name:      "host_kernel_event",
-					Value:     1,
-					Timestamp: ts,
-					Labels:    map[string]string{"event_type": p.eventType, "message": truncate(msg, 120)},
-				})
+		if n <= 0 {
+			break
+		}
+		for _, line := range strings.Split(string(buf[:n]), "\n") {
+			if line == "" {
+				continue
+			}
+			lineCount++
+			if lineCount > 4096 {
 				break
+			}
+			msg := parseKmsgMessage(line)
+			if msg == "" {
+				continue
+			}
+			ts := parseKmsgTimestamp(line)
+			for _, p := range eventPatterns {
+				if p.re.MatchString(msg) {
+					metrics = append(metrics, Metric{
+						Name:      "host_kernel_event",
+						Value:     1,
+						Timestamp: ts,
+						Labels:    map[string]string{"event_type": p.eventType, "message": truncate(msg, 120)},
+					})
+					break
+				}
 			}
 		}
 	}
