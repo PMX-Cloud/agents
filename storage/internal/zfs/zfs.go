@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/pmx-cloud/agents/storage/internal/storageexec"
@@ -72,18 +73,211 @@ type TuneParams struct {
 	AllowDedup bool   `json:"allow_dedup"`
 }
 
+// PoolStatus is the structured zfs.status payload the backend consumes.
+type PoolStatus struct {
+	Pools []PoolInfo `json:"pools"`
+}
+
+// PoolInfo describes one pool: capacity + health from `zpool list`, vdev
+// topology (best-effort) from `zpool status -j`.
+type PoolInfo struct {
+	Name        string     `json:"name"`
+	State       string     `json:"state"`
+	SizeBytes   int64      `json:"size_bytes"`
+	AllocBytes  int64      `json:"alloc_bytes"`
+	FreeBytes   int64      `json:"free_bytes"`
+	FragPercent *float64   `json:"frag_percent,omitempty"`
+	DedupRatio  *float64   `json:"dedup_ratio,omitempty"`
+	Vdevs       []VdevInfo `json:"vdevs"`
+}
+
+// VdevInfo is a node in the pool's vdev tree.
+type VdevInfo struct {
+	Name     string     `json:"name"`
+	Type     string     `json:"type"`
+	State    string     `json:"state"`
+	Children []VdevInfo `json:"children,omitempty"`
+}
+
+// Status returns a structured snapshot of every ZFS pool. Capacity, health and
+// fragmentation come from `zpool list -Hp` (exact byte values); vdev topology is
+// merged best-effort from `zpool status -j`. A host with no pools returns an
+// empty list (not an error) so the backend never fabricates pools. If ZFS is not
+// installed at all, `zpool list` fails and we also return an empty list.
 func Status(ctx context.Context, ex storageexec.Interface) (json.RawMessage, error) {
-	res, err := ex.Zpool(ctx, "status", "-j")
-	if err == nil {
-		raw := json.RawMessage(append([]byte(nil), res.Stdout...))
-		return raw, nil
+	listRes, err := ex.Zpool(ctx, "list", "-Hp", "-o", "name,size,alloc,free,frag,dedup,health")
+	if err != nil {
+		// No ZFS / no pools -> empty, not an error. The UI shows an empty state.
+		return json.Marshal(PoolStatus{Pools: []PoolInfo{}})
 	}
-	fallback, err2 := ex.Zpool(ctx, "status")
-	if err2 != nil {
-		return nil, fmt.Errorf("zfs.status: %w", err)
+	pools := parseZpoolList(listRes.StdoutString())
+
+	// Best-effort vdev topology. Failure leaves Vdevs empty but keeps capacity.
+	if statusRes, statusErr := ex.Zpool(ctx, "status", "-j"); statusErr == nil {
+		vdevsByPool := parseZpoolStatusVdevs(statusRes.Stdout)
+		for i := range pools {
+			if v, ok := vdevsByPool[pools[i].Name]; ok {
+				pools[i].Vdevs = v
+			}
+		}
 	}
-	payload, _ := json.Marshal(map[string]string{"status": strings.TrimSpace(fallback.StdoutString())})
-	return payload, nil
+
+	for i := range pools {
+		if pools[i].Vdevs == nil {
+			pools[i].Vdevs = []VdevInfo{}
+		}
+	}
+	return json.Marshal(PoolStatus{Pools: pools})
+}
+
+// parseZpoolList parses tab-separated `zpool list -Hp -o name,size,alloc,free,frag,dedup,health`.
+func parseZpoolList(out string) []PoolInfo {
+	pools := []PoolInfo{}
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Split(line, "\t")
+		if len(fields) < 7 {
+			continue
+		}
+		info := PoolInfo{
+			Name:       fields[0],
+			SizeBytes:  parseInt64(fields[1]),
+			AllocBytes: parseInt64(fields[2]),
+			FreeBytes:  parseInt64(fields[3]),
+			State:      strings.ToUpper(strings.TrimSpace(fields[6])),
+			Vdevs:      []VdevInfo{},
+		}
+		if frag := parsePercent(fields[4]); frag != nil {
+			info.FragPercent = frag
+		}
+		if dedup := parseRatio(fields[5]); dedup != nil {
+			info.DedupRatio = dedup
+		}
+		pools = append(pools, info)
+	}
+	return pools
+}
+
+// zpoolStatusJSON mirrors the OpenZFS 2.2+ `zpool status -j` shape (nested
+// vdev maps keyed by name). Older ZFS without -j simply yields no topology.
+type zpoolStatusJSON struct {
+	Pools map[string]struct {
+		Name  string                  `json:"name"`
+		State string                  `json:"state"`
+		Vdevs map[string]zpoolVdevRaw `json:"vdevs"`
+	} `json:"pools"`
+}
+
+type zpoolVdevRaw struct {
+	Name     string                  `json:"name"`
+	VdevType string                  `json:"vdev_type"`
+	State    string                  `json:"state"`
+	Vdevs    map[string]zpoolVdevRaw `json:"vdevs"`
+}
+
+// parseZpoolStatusVdevs returns the vdev children of each pool's root vdev.
+func parseZpoolStatusVdevs(raw []byte) map[string][]VdevInfo {
+	out := map[string][]VdevInfo{}
+	var parsed zpoolStatusJSON
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return out
+	}
+	for poolName, pool := range parsed.Pools {
+		children := []VdevInfo{}
+		// The top-level vdev map is keyed by the pool name (the root vdev); its
+		// children are the real vdevs (mirror-0, raidz1-0, bare disks, ...).
+		for _, root := range pool.Vdevs {
+			for _, child := range sortedVdevs(root.Vdevs) {
+				children = append(children, convertVdev(child))
+			}
+		}
+		out[poolName] = children
+	}
+	return out
+}
+
+func convertVdev(v zpoolVdevRaw) VdevInfo {
+	info := VdevInfo{
+		Name:  v.Name,
+		Type:  normalizeVdevType(v.VdevType),
+		State: strings.ToUpper(strings.TrimSpace(v.State)),
+	}
+	for _, child := range sortedVdevs(v.Vdevs) {
+		info.Children = append(info.Children, convertVdev(child))
+	}
+	return info
+}
+
+func sortedVdevs(m map[string]zpoolVdevRaw) []zpoolVdevRaw {
+	out := make([]zpoolVdevRaw, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+func normalizeVdevType(t string) string {
+	t = strings.ToLower(strings.TrimSpace(t))
+	switch {
+	case t == "disk" || t == "file":
+		return "disk"
+	case t == "mirror":
+		return "mirror"
+	case strings.HasPrefix(t, "raidz3"):
+		return "raidz2"
+	case strings.HasPrefix(t, "raidz2"):
+		return "raidz2"
+	case strings.HasPrefix(t, "raidz"):
+		return "raidz1"
+	case t == "spare":
+		return "spare"
+	case t == "cache" || t == "l2cache":
+		return "cache"
+	case t == "log" || t == "slog":
+		return "log"
+	default:
+		return "disk"
+	}
+}
+
+func parseInt64(s string) int64 {
+	s = strings.TrimSpace(s)
+	if s == "" || s == "-" {
+		return 0
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
+func parsePercent(s string) *float64 {
+	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "%"))
+	if s == "" || s == "-" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
+}
+
+func parseRatio(s string) *float64 {
+	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "x"))
+	if s == "" || s == "-" {
+		return nil
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return nil
+	}
+	return &v
 }
 
 func PoolCreate(ctx context.Context, ex storageexec.Interface, p PoolCreateParams) error {
