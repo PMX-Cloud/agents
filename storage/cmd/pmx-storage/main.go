@@ -170,7 +170,10 @@ func (h *storageHandler) newExec(jobID string) *storageexec.Exec {
 	ex.JobID = jobID
 	ex.AuditLog = h.auditLog
 	ex.Logger = h.log
-	ex.Paths = map[string]string{
+	// Resolve the configured command paths against the host (handles usr-merged
+	// layouts where the configured /sbin/* path is not a real file) and rebuild
+	// the allowlist from the resolved set so the allowlist stays in sync.
+	ex.Paths, ex.AllowedBinaries = storageexec.ResolvePaths(map[string]string{
 		"lsblk":      h.cfg.Commands.LsblkPath,
 		"parted":     h.cfg.Commands.PartedPath,
 		"wipefs":     h.cfg.Commands.WipefsPath,
@@ -184,7 +187,7 @@ func (h *storageHandler) newExec(jobID string) *storageexec.Exec {
 		"net":        h.cfg.Commands.NetPath,
 		"nvme":       h.cfg.Commands.NvmePath,
 		"qemu-img":   h.cfg.Commands.QemuImgPath,
-	}
+	})
 	return ex
 }
 
