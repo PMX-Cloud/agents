@@ -164,8 +164,38 @@ func run(cfg *telCfg.Config, log *slog.Logger) error {
 	go func() {
 		registry.Run(ctx)
 	}()
+
+	// registry.Out() must fan out to BOTH the push sender and the threshold
+	// engine. Previously two goroutines read the single channel directly, so each
+	// batch reached only one of them — the sender was starved and host.metrics
+	// were never shipped to the backend. Tee every batch to both consumers.
+	senderCh := make(chan []collectors.Metric, 256)
+	evalCh := make(chan []collectors.Metric, 256)
 	go func() {
-		snd.Run(ctx, registry.Out())
+		defer close(senderCh)
+		defer close(evalCh)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case batch, ok := <-registry.Out():
+				if !ok {
+					return
+				}
+				// Non-blocking: a slow/stuck consumer must never wedge collection.
+				select {
+				case senderCh <- batch:
+				default:
+				}
+				select {
+				case evalCh <- batch:
+				default:
+				}
+			}
+		}
+	}()
+	go func() {
+		snd.Run(ctx, senderCh)
 	}()
 	// Evaluation goroutine.
 	go func() {
@@ -173,7 +203,7 @@ func run(cfg *telCfg.Config, log *slog.Logger) error {
 			select {
 			case <-ctx.Done():
 				return
-			case batch, ok := <-registry.Out():
+			case batch, ok := <-evalCh:
 				if !ok {
 					return
 				}
