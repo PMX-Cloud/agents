@@ -69,6 +69,11 @@ func (c *CPUCollector) Collect(_ context.Context) ([]Metric, error) {
 		{Name: "host_cpu_iowait_seconds", Value: cur.iowait, Timestamp: now},
 	}
 
+	// Emit CPU core count on every sample so the backend can populate nodes.cpuCores.
+	if count := parseCPUCount(data); count > 0 {
+		metrics = append(metrics, Metric{Name: "host_cpu_count", Value: float64(count), Timestamp: now})
+	}
+
 	// Emit usage percentage if we have a previous sample.
 	if !prev.ts.IsZero() {
 		dt := now.Sub(prev.ts).Seconds()
@@ -115,4 +120,19 @@ func parseCPUStat(data []byte) (cpuStat, error) {
 		}, nil
 	}
 	return cpuStat{}, fmt.Errorf("cpu: 'cpu' line not found in %d bytes", len(data))
+}
+
+// parseCPUCount counts the number of individual CPU lines (cpu0, cpu1, …)
+// in /proc/stat content. This is the logical core count seen by the kernel.
+func parseCPUCount(data []byte) int {
+	count := 0
+	scanner := bufio.NewScanner(bytes.NewReader(data))
+	for scanner.Scan() {
+		line := scanner.Text()
+		// Individual CPU lines start with "cpuN " where N is a digit.
+		if len(line) > 3 && strings.HasPrefix(line, "cpu") && line[3] >= '0' && line[3] <= '9' {
+			count++
+		}
+	}
+	return count
 }
