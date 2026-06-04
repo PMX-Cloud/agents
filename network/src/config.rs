@@ -88,8 +88,13 @@ impl Config {
         if !self.backend.url.starts_with("wss://") {
             bail!("backend.url must start with wss://");
         }
-        if self.identity.cert.trim().is_empty() || self.identity.key.trim().is_empty() {
-            bail!("identity.cert and identity.key are required");
+        // mTLS identity (cert/key) is only required when not using token auth.
+        // With backend.auth_token set, the wsclient authenticates via Bearer and
+        // skips client certs, so empty cert/key is valid (token-only deployment).
+        if self.backend.auth_token.trim().is_empty()
+            && (self.identity.cert.trim().is_empty() || self.identity.key.trim().is_empty())
+        {
+            bail!("identity.cert and identity.key are required when backend.auth_token is unset");
         }
         if self.keyset.path.trim().is_empty() {
             bail!("keyset.path is required");
