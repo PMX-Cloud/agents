@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -105,11 +107,71 @@ func DefaultAllowedBinaries() map[string]bool {
 	}
 }
 
-// New returns an Exec with default allowlist + paths.
+// trustedBinDirs are the only directories a binary may be resolved from. This
+// keeps the allowlist meaningful on usr-merged hosts (where /sbin/lsblk may not
+// exist as a real file) without allowing execution of arbitrary PATH entries.
+var trustedBinDirs = []string{
+	"/usr/sbin",
+	"/sbin",
+	"/usr/bin",
+	"/bin",
+	"/usr/local/sbin",
+	"/usr/local/bin",
+}
+
+// resolveBinary returns the real path for a command. It prefers the configured
+// default path; if that file is absent (common on usr-merged systems where the
+// canonical location moved), it searches the trusted bin dirs for the same
+// basename. The returned path is guaranteed to be in a trusted directory, so
+// callers can safely add it to the allowlist. When nothing is found the default
+// is returned unchanged so the eventual exec fails with a clear error.
+func resolveBinary(defaultPath string) string {
+	if isExecutableFile(defaultPath) {
+		return defaultPath
+	}
+	base := filepath.Base(defaultPath)
+	for _, dir := range trustedBinDirs {
+		candidate := filepath.Join(dir, base)
+		if isExecutableFile(candidate) {
+			return candidate
+		}
+	}
+	return defaultPath
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	return info.Mode().Perm()&0o111 != 0
+}
+
+// resolvedPathsAndAllowlist resolves every default command to a real on-host
+// path and builds an allowlist that matches the resolved set. This is what makes
+// the agent work on Debian/Ubuntu/Proxmox regardless of /sbin vs /usr/bin
+// layout, removing the need for host-side symlinks.
+func resolvedPathsAndAllowlist() (map[string]string, map[string]bool) {
+	paths := make(map[string]string)
+	allow := make(map[string]bool)
+	for name, defaultPath := range DefaultBinaryPaths() {
+		resolved := resolveBinary(defaultPath)
+		paths[name] = resolved
+		allow[resolved] = true
+	}
+	return paths, allow
+}
+
+// New returns an Exec with paths resolved against the host and an allowlist that
+// matches them.
 func New() *Exec {
+	paths, allow := resolvedPathsAndAllowlist()
 	return &Exec{
-		Paths:           DefaultBinaryPaths(),
-		AllowedBinaries: DefaultAllowedBinaries(),
+		Paths:           paths,
+		AllowedBinaries: allow,
 	}
 }
 
@@ -158,11 +220,14 @@ func (e *Exec) Mkfs(ctx context.Context, fsType string, args ...string) (*Result
 }
 
 func (e *Exec) runNamed(ctx context.Context, name string, args ...string) (*Result, error) {
-	if e.Paths == nil {
-		e.Paths = DefaultBinaryPaths()
-	}
-	if e.AllowedBinaries == nil {
-		e.AllowedBinaries = DefaultAllowedBinaries()
+	if e.Paths == nil || e.AllowedBinaries == nil {
+		paths, allow := resolvedPathsAndAllowlist()
+		if e.Paths == nil {
+			e.Paths = paths
+		}
+		if e.AllowedBinaries == nil {
+			e.AllowedBinaries = allow
+		}
 	}
 	path, ok := e.Paths[name]
 	if !ok || strings.TrimSpace(path) == "" {
