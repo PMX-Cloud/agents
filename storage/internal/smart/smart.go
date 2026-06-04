@@ -45,7 +45,8 @@ type smartJSON struct {
 		Table []struct {
 			Name string `json:"name"`
 			Raw  struct {
-				Value float64 `json:"value"`
+				Value  float64 `json:"value"`
+				String string  `json:"string"`
 			} `json:"raw"`
 		} `json:"table"`
 	} `json:"ata_smart_attributes"`
@@ -116,11 +117,41 @@ func Poll(ctx context.Context, ex storageexec.Interface, devices []string) (*Pol
 			if strings.TrimSpace(row.Name) == "" {
 				continue
 			}
-			entry.Attributes[row.Name] = row.Raw.Value
+			// Some drives pack vendor data into the 48-bit raw value (e.g.
+			// Power_On_Hours "11669 (75 234 0)" decodes to a huge raw.value).
+			// smartctl's raw.string leading integer is the correctly decoded
+			// value, so prefer it and fall back to raw.value.
+			if v, ok := leadingInt(row.Raw.String); ok {
+				entry.Attributes[row.Name] = v
+			} else {
+				entry.Attributes[row.Name] = row.Raw.Value
+			}
 		}
 		out.Disks = append(out.Disks, entry)
 	}
 	return out, nil
+}
+
+// leadingInt parses the leading integer token of a smartctl raw.string (e.g.
+// "11669 (75 234 0)" -> 11669, "13346" -> 13346). Returns false when the string
+// does not start with a base-10 integer.
+func leadingInt(s string) (float64, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	end := 0
+	for end < len(s) && s[end] >= '0' && s[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	v, err := strconv.ParseFloat(s[:end], 64)
+	if err != nil {
+		return 0, false
+	}
+	return v, true
 }
 
 // isUnsupportedSmart reports whether a failed smartctl invocation indicates the
