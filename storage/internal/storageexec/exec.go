@@ -155,14 +155,32 @@ func isExecutableFile(path string) bool {
 // the agent work on Debian/Ubuntu/Proxmox regardless of /sbin vs /usr/bin
 // layout, removing the need for host-side symlinks.
 func resolvedPathsAndAllowlist() (map[string]string, map[string]bool) {
-	paths := make(map[string]string)
-	allow := make(map[string]bool)
-	for name, defaultPath := range DefaultBinaryPaths() {
-		resolved := resolveBinary(defaultPath)
-		paths[name] = resolved
+	return ResolvePaths(DefaultBinaryPaths())
+}
+
+// ResolvePaths takes a command->path map (typically the configured command
+// paths) and returns the same map with every path resolved against the host,
+// plus an allowlist built from the resolved set. An empty path for a known
+// command falls back to its built-in default before resolution. Callers that
+// override Exec.Paths from config MUST use this so Exec.AllowedBinaries stays in
+// sync with the resolved paths — otherwise a resolved binary is rejected by the
+// allowlist check.
+func ResolvePaths(paths map[string]string) (map[string]string, map[string]bool) {
+	defaults := DefaultBinaryPaths()
+	resolvedPaths := make(map[string]string, len(paths))
+	allow := make(map[string]bool, len(paths))
+	for name, p := range paths {
+		if strings.TrimSpace(p) == "" {
+			p = defaults[name]
+		}
+		if strings.TrimSpace(p) == "" {
+			continue
+		}
+		resolved := resolveBinary(p)
+		resolvedPaths[name] = resolved
 		allow[resolved] = true
 	}
-	return paths, allow
+	return resolvedPaths, allow
 }
 
 // New returns an Exec with paths resolved against the host and an allowlist that
