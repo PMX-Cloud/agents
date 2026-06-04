@@ -62,7 +62,10 @@ func Poll(ctx context.Context, ex storageexec.Interface, devices []string) (*Pol
 	out := &PollResult{Disks: make([]DiskResult, 0, len(devices))}
 	for _, dev := range devices {
 		entry := DiskResult{Device: dev, Attributes: map[string]float64{}}
-		res, err := ex.Smartctl(ctx, "-j", "-A", dev)
+		// -H reports the overall SMART health (smart_status.passed); without it
+		// smartctl -A omits smart_status entirely and every disk would parse as
+		// "failed". -A adds the vendor attribute table.
+		res, err := ex.Smartctl(ctx, "-j", "-H", "-A", dev)
 		if err != nil {
 			stderr := ""
 			if res != nil {
