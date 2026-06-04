@@ -49,6 +49,23 @@ func TestPollParsesJSONDespiteWarningExitCode(t *testing.T) {
 	}
 }
 
+// Drives that pack vendor data into the raw value expose the real number in
+// raw.string; Poll must decode that rather than the packed raw.value.
+func TestPollDecodesPackedRawValueFromString(t *testing.T) {
+	const body = `{"smart_status":{"passed":true},` +
+		`"ata_smart_attributes":{"table":[{"name":"Power_On_Hours","raw":{"value":83468394442133,"string":"11669 (75 234 0)"}}]}}`
+	m := &storageexec.MockExec{Results: map[string]*storageexec.Result{
+		"smartctl": {Stdout: []byte(body), ExitCode: 0},
+	}}
+	res, err := smart.Poll(context.Background(), m, []string{"/dev/sdd"})
+	if err != nil {
+		t.Fatalf("poll: %v", err)
+	}
+	if got := res.Disks[0].Attributes["Power_On_Hours"]; got != 11669 {
+		t.Fatalf("expected decoded Power_On_Hours 11669, got %v", got)
+	}
+}
+
 // When smartctl emits no usable JSON and the device is not merely unsupported,
 // the disk is reported as errored without aborting the whole poll.
 func TestPollReportsErrorWhenNoJSON(t *testing.T) {
