@@ -113,9 +113,13 @@ func run(cfg *config.Config, log *slog.Logger) error {
 		}
 	}
 
-	auditLog, err := audit.Open("/var/log/pmx-cloud/pmx-backup.audit.log")
+	auditLog, err := audit.OpenWithFallback(
+		"/var/log/pmx-cloud/pmx-backup.audit.log",
+		"/tmp/pmx-backup.audit.log",
+		log,
+	)
 	if err != nil {
-		auditLog, _ = audit.Open("/tmp/pmx-backup.audit.log")
+		return err
 	}
 	defer auditLog.Close()
 

@@ -147,9 +147,13 @@ func run(cfg *hypCfg.Config, log *slog.Logger, kind provider.Kind) error {
 	cache := envpkg.NewReplayCache(100_000, 24*time.Hour)
 	defer cache.Close()
 
-	auditLog, err := audit.Open("/var/log/pmx-cloud/pmx-hypervisor.audit.log")
+	auditLog, err := audit.OpenWithFallback(
+		"/var/log/pmx-cloud/pmx-hypervisor.audit.log",
+		"/tmp/pmx-hypervisor.audit.log",
+		log,
+	)
 	if err != nil {
-		auditLog, _ = audit.Open("/tmp/pmx-hypervisor.audit.log")
+		return err
 	}
 	defer auditLog.Close()
 

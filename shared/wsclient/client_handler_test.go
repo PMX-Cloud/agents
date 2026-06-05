@@ -97,6 +97,84 @@ func TestRun_DispatchesValidEnvelope(t *testing.T) {
 	cancel()
 }
 
+// TestRun_IgnoresTextControlFrames ensures JSON control traffic from the
+// gateway does not get treated as a CBOR envelope.
+func TestRun_IgnoresTextControlFrames(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ks, err := envelope.ParseKeySet(hex.EncodeToString(pub))
+	if err != nil {
+		t.Fatalf("ParseKeySet: %v", err)
+	}
+
+	env := &envelope.Envelope{
+		Version:   "pmx-agent-v1",
+		JobID:     "ws-dispatch-text-001",
+		IssuedAt:  time.Now(),
+		ExpiresAt: time.Now().Add(5 * time.Minute),
+		Audience:  "pmx-test",
+		Host:      "",
+		Command:   "test.noop",
+		Params:    map[string]interface{}{},
+	}
+	if err := env.Sign(priv); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	envBytes, err := env.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	dispatched := make(chan struct{}, 1)
+	h := &onEnvelopeHandler{fn: func() { dispatched <- struct{}{} }}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn := upgradeConn(w, r)
+		if conn == nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.WriteMessage(
+			websocket.TextMessage,
+			[]byte(`{"version":"pmx-agent-v1","type":"cloud.hello","timestamp":1,"payload":{}}`),
+		)
+		_ = conn.WriteMessage(websocket.BinaryMessage, envBytes)
+		for {
+			if _, _, err := conn.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}))
+	defer srv.Close()
+
+	c, err := wsclient.New(wsclient.Config{
+		BackendURL:        "ws" + strings.TrimPrefix(srv.URL, "http") + "/ws",
+		AgentClass:        "pmx-test",
+		KeySet:            ks,
+		ReplayCache:       envelope.NewReplayCache(1024, 0),
+		Handler:           h,
+		AllowInsecureWS:   true,
+		HeartbeatInterval: time.Hour,
+		HeartbeatTimeout:  time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	defer cancel()
+	go func() { _ = c.Run(ctx) }()
+
+	select {
+	case <-dispatched:
+	case <-time.After(400 * time.Millisecond):
+		t.Error("envelope was not dispatched within timeout")
+	}
+	cancel()
+}
+
 // TestSendRaw_WhileConnected sends a raw frame while connected.
 func TestSendRaw_WhileConnected(t *testing.T) {
 	received := make(chan []byte, 2)

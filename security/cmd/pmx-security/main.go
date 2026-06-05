@@ -110,9 +110,13 @@ func run(cfg *config.Config, log *slog.Logger) error {
 	cache := envpkg.NewReplayCache(100_000, 24*time.Hour)
 	defer cache.Close()
 
-	auditLog, err := audit.Open("/var/log/pmx-cloud/pmx-security.audit.log")
+	auditLog, err := audit.OpenWithFallback(
+		"/var/log/pmx-cloud/pmx-security.audit.log",
+		"/tmp/pmx-security.audit.log",
+		log,
+	)
 	if err != nil {
-		auditLog, _ = audit.Open("/tmp/pmx-security.audit.log")
+		return err
 	}
 	defer auditLog.Close()
 

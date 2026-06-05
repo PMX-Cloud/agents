@@ -88,9 +88,13 @@ func run(cfg *telCfg.Config, log *slog.Logger) error {
 	defer cache.Close()
 
 	// ── Audit log ────────────────────────────────────────────────────────────
-	auditLog, err := audit.Open("/var/log/pmx-cloud/pmx-telemetry.audit.log")
+	auditLog, err := audit.OpenWithFallback(
+		"/var/log/pmx-cloud/pmx-telemetry.audit.log",
+		"/tmp/pmx-telemetry.audit.log",
+		log,
+	)
 	if err != nil {
-		auditLog, _ = audit.Open("/tmp/pmx-telemetry.audit.log")
+		return err
 	}
 	defer auditLog.Close()
 
