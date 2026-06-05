@@ -96,9 +96,13 @@ func run(cfg *storCfg.Config, log *slog.Logger) error {
 		return fmt.Errorf("load host fingerprint: %w", err)
 	}
 
-	auditLog, err := audit.Open("/var/log/pmx-cloud/pmx-storage.audit.log")
+	auditLog, err := audit.OpenWithFallback(
+		"/var/log/pmx-cloud/pmx-storage.audit.log",
+		"/tmp/pmx-storage.audit.log",
+		log,
+	)
 	if err != nil {
-		auditLog, _ = audit.Open("/tmp/pmx-storage.audit.log")
+		return err
 	}
 	defer auditLog.Close()
 

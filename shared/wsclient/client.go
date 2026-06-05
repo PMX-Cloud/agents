@@ -312,9 +312,15 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		_, msg, err := conn.ReadMessage()
+		messageType, msg, err := conn.ReadMessage()
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
+		}
+		// The gateway sends JSON control frames (e.g. cloud.hello,
+		// cloud.registered) as text messages. Only binary frames can carry signed
+		// CBOR job envelopes, so ignore non-binary traffic like the Rust wsclient.
+		if messageType != websocket.BinaryMessage {
+			continue
 		}
 
 		env, err := envelope.Unmarshal(msg)
