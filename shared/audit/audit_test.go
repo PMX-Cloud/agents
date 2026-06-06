@@ -214,6 +214,26 @@ func TestInterop_GoAuditDumpFile(t *testing.T) {
 	t.Logf("audit testdata written to %s", path)
 }
 
+func TestAudit_NilLogSafeMethods(t *testing.T) {
+	var l *audit.Log
+
+	if got := l.Head(); got != "" {
+		t.Fatalf("Head() on nil log = %q, want empty", got)
+	}
+	if _, err := l.Append(audit.Entry{JobID: "job-nil"}); err == nil {
+		t.Fatal("Append() on nil log should fail")
+	}
+	if _, err := l.Iter(1); err == nil {
+		t.Fatal("Iter() on nil log should fail")
+	}
+	if err := l.Verify(); err == nil {
+		t.Fatal("Verify() on nil log should fail")
+	}
+	if err := l.Close(); err != nil {
+		t.Fatalf("Close() on nil log should be no-op, got %v", err)
+	}
+}
+
 // helpers ---------------------------------------------------------------
 
 func splitLines(data []byte) [][]byte {

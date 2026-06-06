@@ -78,6 +78,9 @@ func Open(path string) (*Log, error) {
 // Head returns the current audit chain head (hex SHA-256).
 // Returns empty string if no entries have been written yet.
 func (l *Log) Head() string {
+	if l == nil {
+		return ""
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.head
@@ -85,6 +88,9 @@ func (l *Log) Head() string {
 
 // Append writes e to the log, computes its hash, and returns the new chain head.
 func (l *Log) Append(e Entry) (chainHead string, err error) {
+	if l == nil {
+		return "", fmt.Errorf("audit: append on nil log")
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -129,6 +135,9 @@ func (l *Log) Append(e Entry) (chainHead string, err error) {
 // Close the returned channel's done channel to stop early. The channel is
 // closed when all matching entries have been sent or done is signalled.
 func (l *Log) Iter(fromSeq uint64) (<-chan Entry, error) {
+	if l == nil {
+		return nil, fmt.Errorf("audit: iter on nil log")
+	}
 	l.mu.Lock()
 	path := l.path
 	l.mu.Unlock()
@@ -157,6 +166,9 @@ func (l *Log) Iter(fromSeq uint64) (<-chan Entry, error) {
 
 // Close flushes and closes the underlying file.
 func (l *Log) Close() error {
+	if l == nil {
+		return nil
+	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.file != nil {
@@ -170,6 +182,9 @@ func (l *Log) Close() error {
 // Verify replays the entire log and returns an error if any entry's hash does
 // not match the recomputed value. Useful for tamper detection.
 func (l *Log) Verify() error {
+	if l == nil {
+		return fmt.Errorf("audit: verify on nil log")
+	}
 	l.mu.Lock()
 	path := l.path
 	l.mu.Unlock()
