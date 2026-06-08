@@ -83,8 +83,8 @@ func (c *Config) validate() error {
 	if c.Backend.URL == "" {
 		return fmt.Errorf("config: backend.url is required")
 	}
-	if !strings.HasPrefix(c.Backend.URL, "wss://") {
-		return fmt.Errorf("config: backend.url must start with wss://, got %q", c.Backend.URL)
+	if !strings.HasPrefix(c.Backend.URL, "wss://") && !strings.HasPrefix(c.Backend.URL, "ws://") {
+		return fmt.Errorf("config: backend.url must start with wss:// or ws://, got %q", c.Backend.URL)
 	}
 	if c.Keyset.Path == "" {
 		c.Keyset.Path = "/etc/pmx-cloud/keyset.pub"

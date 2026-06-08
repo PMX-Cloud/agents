@@ -443,23 +443,123 @@ impl NetworkHandler {
             }
 
             "network.repair" => {
-                self.runner
-                    .run_expect_ok(
-                        "busctl",
-                        &[
-                            "call",
-                            "org.freedesktop.systemd1",
-                            "/org/freedesktop/systemd1",
-                            "org.freedesktop.systemd1.Manager",
-                            "RestartUnit",
-                            "ss",
-                            "systemd-networkd.service",
-                            "replace",
-                        ],
-                    )
+                let mut attempts: Vec<Value> = Vec::new();
+                let mut repaired = false;
+
+                let networkd = self
+                    .runner
+                    .run("systemctl", &["is-active", "systemd-networkd.service"])
                     .await
-                    .context("network.repair: failed to restart systemd-networkd over dbus")?;
-                json!({"ok": true})
+                    .ok()
+                    .filter(|result| result.status == 0);
+
+                if networkd.is_some() {
+                    let result = self
+                        .runner
+                        .run(
+                            "busctl",
+                            &[
+                                "call",
+                                "org.freedesktop.systemd1",
+                                "/org/freedesktop/systemd1",
+                                "org.freedesktop.systemd1.Manager",
+                                "RestartUnit",
+                                "ss",
+                                "systemd-networkd.service",
+                                "replace",
+                            ],
+                        )
+                        .await;
+                    match result {
+                        Ok(output) if output.status == 0 => {
+                            repaired = true;
+                            attempts.push(json!({
+                                "unit": "systemd-networkd.service",
+                                "ok": true,
+                            }));
+                        }
+                        Ok(output) => {
+                            attempts.push(json!({
+                                "unit": "systemd-networkd.service",
+                                "ok": false,
+                                "status": output.status,
+                                "stderr": output.stderr,
+                            }));
+                        }
+                        Err(error) => {
+                            attempts.push(json!({
+                                "unit": "systemd-networkd.service",
+                                "ok": false,
+                                "error": error.to_string(),
+                            }));
+                        }
+                    }
+                }
+
+                if !repaired {
+                    let networking = self
+                        .runner
+                        .run("systemctl", &["is-active", "networking.service"])
+                        .await
+                        .ok()
+                        .filter(|result| result.status == 0);
+
+                    if networking.is_some() {
+                        let result = self
+                            .runner
+                            .run(
+                                "busctl",
+                                &[
+                                    "call",
+                                    "org.freedesktop.systemd1",
+                                    "/org/freedesktop/systemd1",
+                                    "org.freedesktop.systemd1.Manager",
+                                    "RestartUnit",
+                                    "ss",
+                                    "networking.service",
+                                    "replace",
+                                ],
+                            )
+                            .await;
+                        match result {
+                            Ok(output) if output.status == 0 => {
+                                repaired = true;
+                                attempts.push(json!({
+                                    "unit": "networking.service",
+                                    "ok": true,
+                                }));
+                            }
+                            Ok(output) => {
+                                attempts.push(json!({
+                                    "unit": "networking.service",
+                                    "ok": false,
+                                    "status": output.status,
+                                    "stderr": output.stderr,
+                                }));
+                            }
+                            Err(error) => {
+                                attempts.push(json!({
+                                    "unit": "networking.service",
+                                    "ok": false,
+                                    "error": error.to_string(),
+                                }));
+                            }
+                        }
+                    }
+                }
+
+                if attempts.is_empty() {
+                    attempts.push(json!({
+                        "ok": false,
+                        "reason": "No active network service found (systemd-networkd/networking)",
+                    }));
+                }
+
+                json!({
+                    "ok": repaired,
+                    "repaired": repaired,
+                    "attempts": attempts,
+                })
             }
 
             "martian.fix" => {

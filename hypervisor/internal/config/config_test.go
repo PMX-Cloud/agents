@@ -43,14 +43,14 @@ func TestConfig_ParseValid(t *testing.T) {
 	}
 }
 
-func TestConfig_RejectsNonWSS(t *testing.T) {
+func TestConfig_RejectsInvalidScheme(t *testing.T) {
 	bad := `
 [backend]
-url = "ws://insecure"
+url = "http://insecure"
 `
 	_, err := config.Parse([]byte(bad))
 	if err == nil {
-		t.Fatal("expected error for non-wss URL")
+		t.Fatal("expected error for non-wss/ws URL")
 	}
 }
 

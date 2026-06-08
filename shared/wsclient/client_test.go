@@ -43,16 +43,16 @@ func TestNew_MissingURL(t *testing.T) {
 	}
 }
 
-func TestNew_NonWSSURL(t *testing.T) {
+func TestNew_InvalidSchemeURL(t *testing.T) {
 	_, err := wsclient.New(wsclient.Config{
-		BackendURL:  "ws://insecure",
+		BackendURL:  "http://insecure",
 		AgentClass:  "pmx-test",
 		KeySet:      testKeySet(t),
 		ReplayCache: testReplayCache(),
 		Handler:     &noopHandler{},
 	})
 	if err == nil {
-		t.Fatal("expected error for non-wss:// URL")
+		t.Fatal("expected error for non-wss/ws:// URL")
 	}
 }
 

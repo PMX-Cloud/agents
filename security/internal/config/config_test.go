@@ -26,10 +26,10 @@ binary = "/usr/sbin/lynis"
 profile = "/etc/lynis/default.prf"
 `
 
-func TestParseRejectsNonWSSBackendURL(t *testing.T) {
+func TestParseRejectsInvalidBackendURL(t *testing.T) {
 	_, err := config.Parse([]byte(strings.Replace(validConfig, "wss://", "https://", 1)))
-	if err == nil || !strings.Contains(err.Error(), "wss://") {
-		t.Fatalf("expected wss validation error, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "wss:// or ws://") {
+		t.Fatalf("expected validation error, got %v", err)
 	}
 }
 

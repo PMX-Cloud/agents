@@ -85,8 +85,8 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
-        if !self.backend.url.starts_with("wss://") {
-            bail!("backend.url must start with wss://");
+        if !self.backend.url.starts_with("wss://") && !self.backend.url.starts_with("ws://") {
+            bail!("backend.url must start with wss:// or ws://");
         }
         // mTLS identity (cert/key) is only required when not using token auth.
         // With backend.auth_token set, the wsclient authenticates via Bearer and
