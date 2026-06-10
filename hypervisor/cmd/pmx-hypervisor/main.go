@@ -325,6 +325,20 @@ func (h *hypervisorHandler) dispatch(ctx context.Context, env *envpkg.Envelope, 
 	params["job_id"] = env.JobID
 
 	switch env.Command {
+	// ── Inventory ─────────────────────────────────────────────────────────
+	case "vm.list":
+		raw, err := vm.ListInventory(ctx, px, "qemu")
+		if err != nil {
+			return errJSON(err), err
+		}
+		return raw, nil
+	case "ct.list":
+		raw, err := vm.ListInventory(ctx, px, "lxc")
+		if err != nil {
+			return errJSON(err), err
+		}
+		return raw, nil
+
 	// ── VM lifecycle ──────────────────────────────────────────────────────
 	case "vm.create":
 		h.vmCreateSem <- struct{}{}
