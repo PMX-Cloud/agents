@@ -241,7 +241,7 @@ fn run_preflight(cfg: &Config) -> Result<()> {
     cfg.validate()?;
 
     for path in [&cfg.identity.cert, &cfg.identity.key, &cfg.keyset.path] {
-        if !std::path::Path::new(path).exists() {
+        if !path.is_empty() && !std::path::Path::new(path).exists() {
             bail!("preflight: missing file {}", path);
         }
     }
