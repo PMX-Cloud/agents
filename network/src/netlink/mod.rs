@@ -87,6 +87,107 @@ pub fn is_safe_ifname(value: &str) -> bool {
     is_safe_token(value) && !value.starts_with('/')
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct IpLinkInfo {
+    info_kind: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct IpLink {
+    ifname: String,
+    mtu: u32,
+    address: Option<String>,
+    flags: Vec<String>,
+    master: Option<String>,
+    linkinfo: Option<IpLinkInfo>,
+    link_type: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct IpAddrInfo {
+    local: Option<String>,
+    prefixlen: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct IpAddr {
+    ifname: String,
+    addr_info: Vec<IpAddrInfo>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InterfaceRecord {
+    pub name: String,
+    pub mac: String,
+    pub mtu: u32,
+    pub addresses: Vec<String>,
+    pub state: String,
+    pub bridge: Option<String>,
+    #[serde(rename = "type")]
+    pub if_type: String,
+}
+
+pub async fn list_interfaces(runner: &Runner) -> Result<Vec<InterfaceRecord>> {
+    let link_res = runner.run("ip", &["-d", "-j", "link", "show"]).await?;
+    if link_res.status != 0 {
+        bail!("ip -d -j link show failed: {}", link_res.stderr);
+    }
+    let links: Vec<IpLink> = serde_json::from_str(&link_res.stdout)
+        .context("parse ip link json")?;
+
+    let addr_res = runner.run("ip", &["-j", "addr"]).await?;
+    if addr_res.status != 0 {
+        bail!("ip -j addr failed: {}", addr_res.stderr);
+    }
+    let addrs: Vec<IpAddr> = serde_json::from_str(&addr_res.stdout)
+        .context("parse ip addr json")?;
+
+    let mut addr_map = std::collections::HashMap::new();
+    for addr in addrs {
+        let mut list = Vec::new();
+        for info in addr.addr_info {
+            if let (Some(local), Some(prefixlen)) = (info.local, info.prefixlen) {
+                list.push(format!("{}/{}", local, prefixlen));
+            }
+        }
+        addr_map.insert(addr.ifname, list);
+    }
+
+    let mut records = Vec::with_capacity(links.len());
+    for link in links {
+        let addresses = addr_map.remove(&link.ifname).unwrap_or_default();
+        let state = if link.flags.iter().any(|f| f == "UP") {
+            "up".to_string()
+        } else {
+            "down".to_string()
+        };
+
+        let if_type = if let Some(ref info) = link.linkinfo {
+            if let Some(ref kind) = info.info_kind {
+                kind.clone()
+            } else {
+                "ethernet".to_string()
+            }
+        } else if link.link_type.as_deref() == Some("loopback") {
+            "ethernet".to_string()
+        } else {
+            "ethernet".to_string()
+        };
+
+        records.push(InterfaceRecord {
+            name: link.ifname,
+            mac: link.address.unwrap_or_else(|| "00:00:00:00:00:00".to_string()),
+            mtu: link.mtu,
+            addresses,
+            state,
+            bridge: link.master,
+            if_type,
+        });
+    }
+
+    Ok(records)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
