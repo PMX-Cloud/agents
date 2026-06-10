@@ -149,6 +149,7 @@ fn declare_capabilities() {
     capability::declare(AGENT_CLASS, "network.verify", 1, Stability::Stable);
     capability::declare(AGENT_CLASS, "network.repair", 1, Stability::Beta);
     capability::declare(AGENT_CLASS, "martian.fix", 1, Stability::Stable);
+    capability::declare(AGENT_CLASS, "network.interfaces.list", 1, Stability::Stable);
 }
 
 #[tokio::main]
@@ -440,6 +441,11 @@ impl NetworkHandler {
                 let p: VerifyParams = serde_json::from_value(params_value)?;
                 let probes = verify_probes(&self.runner, &p.probes).await;
                 serde_json::to_value(json!({"results": probes}))?
+            }
+
+            "network.interfaces.list" => {
+                let list = netlink::list_interfaces(&self.runner).await?;
+                serde_json::to_value(json!({"interfaces": list}))?
             }
 
             "network.repair" => {
