@@ -157,15 +157,14 @@ func run(cfg *hypCfg.Config, log *slog.Logger, kind provider.Kind) error {
 	}
 	defer auditLog.Close()
 
-	// Concurrency semaphores.
+	// Concurrency semaphores. Handlers acquire by SENDING (sem <- struct{})
+	// and release by receiving, so the channels must start EMPTY — capacity
+	// alone bounds concurrency. Pre-filling them made the very first
+	// vm.create/vm.migrate block forever on a full channel, deadlocking the
+	// wsclient read loop (the handler runs inline for backpressure) while
+	// heartbeats kept flowing: the agent looked healthy but was deaf.
 	vmCreateSem := make(chan struct{}, cfg.Limits.MaxConcurrentVMCreate)
 	migrateSem := make(chan struct{}, cfg.Limits.MaxConcurrentMigration)
-	for range cfg.Limits.MaxConcurrentVMCreate {
-		vmCreateSem <- struct{}{}
-	}
-	for range cfg.Limits.MaxConcurrentMigration {
-		migrateSem <- struct{}{}
-	}
 
 	// The Provider is reported in the agent.register payload via Discover().
 	// Today only Discover() is consumed by the backend; VM/CT ops continue
