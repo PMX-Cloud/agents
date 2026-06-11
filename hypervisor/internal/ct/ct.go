@@ -30,6 +30,7 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 		return fmt.Errorf("ct.create: hostname contains unsafe characters")
 	}
 	memory := proxmox.IntParam(params, "memory", 512)
+	cores := proxmox.IntParam(params, "cores", 0)
 	storage := proxmox.StringParam(params, "storage", "local-lvm")
 	if !proxmox.IsSafeToken(storage) {
 		return fmt.Errorf("ct.create: storage contains unsafe characters")
@@ -42,10 +43,20 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 		return nil
 	}
 
+	// Substitute an active rootdir-capable storage when the requested one
+	// (often a backend default like "local-lvm") does not exist on this host.
+	if resolved := proxmox.ResolveStorage(ctx, px, storage, "rootdir"); resolved != storage {
+		stepFn(fmt.Sprintf("storage %q unavailable, using %q", storage, resolved))
+		storage = resolved
+	}
+
 	stepFn("allocate")
 	args := []string{"create", ctid, ostemplate,
 		"--memory", fmt.Sprintf("%d", memory),
 		"--rootfs", fmt.Sprintf("%s:%d", storage, disk),
+	}
+	if cores > 0 {
+		args = append(args, "--cores", fmt.Sprintf("%d", cores))
 	}
 	if hostname != "" {
 		args = append(args, "--hostname", hostname)
