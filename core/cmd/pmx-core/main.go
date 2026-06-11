@@ -15,6 +15,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -198,10 +199,33 @@ func run(cfg *coreCfg.Config, configPath string, log *slog.Logger) error {
 		if !sibMgr.Allow(template) {
 			return errorJSON("NOT_ALLOWED", fmt.Sprintf("template %q is not in the allowlist", template)), nil
 		}
+		// When the backend includes a nested signed envelope (base64 CBOR),
+		// the spawned agent receives THAT envelope instead of this outer
+		// core.spawn.ephemeral one. Required for agents like console-broker
+		// that verify command + audience themselves (the outer envelope is
+		// addressed to pmx-core and would always be rejected). pmx-core does
+		// not verify the nested envelope — the child does, against the same
+		// keyset.
+		childEnv := env
+		jobID := env.JobID
+		if nested, ok := env.Params["envelope"].(string); ok && nested != "" {
+			raw, err := base64.StdEncoding.DecodeString(nested)
+			if err != nil {
+				return errorJSON("BAD_ENVELOPE", "params.envelope is not valid base64"), nil
+			}
+			parsed, err := envpkg.Unmarshal(raw)
+			if err != nil {
+				return errorJSON("BAD_ENVELOPE", fmt.Sprintf("nested envelope: %v", err)), nil
+			}
+			childEnv = parsed
+			if parsed.JobID != "" {
+				jobID = parsed.JobID
+			}
+		}
 		req := spawn.EphemeralRequest{
 			Template: template,
-			JobID:    env.JobID,
-			Envelope: env,
+			JobID:    jobID,
+			Envelope: childEnv,
 		}
 		if err := spawner.Spawn(ctx, req); err != nil {
 			return errorJSON("SPAWN_FAILED", err.Error()), nil
