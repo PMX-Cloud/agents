@@ -86,11 +86,24 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 	net0 := proxmox.StringParam(params, "net0", "virtio,bridge=vmbr0")
 	storage := proxmox.StringParam(params, "storage", "local-lvm")
 	disk := proxmox.StringParam(params, "disk", "")
+	diskGb := proxmox.IntParam(params, "disk_gb", 0)
+	if !proxmox.IsSafeToken(storage) {
+		return fmt.Errorf("storage param contains unsafe characters: %q", storage)
+	}
 
 	// Idempotency: check if VMID already exists.
 	if result, _ := px.Qm(ctx, "config", vmid); result != nil && result.ExitCode == 0 {
 		stepFn("idempotent: VMID already exists, returning success")
 		return nil
+	}
+
+	// Backends default to storages like "local-lvm" that do not exist on
+	// every host — substitute an active images-capable storage when needed.
+	if disk != "" || diskGb > 0 || proxmox.BoolParam(params, "cloud_init") {
+		if resolved := proxmox.ResolveStorage(ctx, px, storage, "images"); resolved != storage {
+			stepFn(fmt.Sprintf("storage %q unavailable, using %q", storage, resolved))
+			storage = resolved
+		}
 	}
 
 	// Step: allocate.
@@ -111,13 +124,19 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 		if !proxmox.IsSafeToken(disk) {
 			return fmt.Errorf("disk param contains unsafe characters: %q", disk)
 		}
-		if !proxmox.IsSafeToken(storage) {
-			return fmt.Errorf("storage param contains unsafe characters: %q", storage)
-		}
 		if _, err := px.Qm(ctx, "set", vmid,
 			"--scsi0", fmt.Sprintf("%s:%s", storage, disk),
 		); err != nil {
 			return fmt.Errorf("vm.create attach-disk: %w", err)
+		}
+	} else if diskGb > 0 {
+		// Step: allocate-disk (fresh boot volume on the resolved storage).
+		stepFn("allocate-disk")
+		if _, err := px.Qm(ctx, "set", vmid,
+			"--scsi0", proxmox.FormatDiskSpec(storage, diskGb),
+			"--boot", "order=scsi0;net0",
+		); err != nil {
+			return fmt.Errorf("vm.create allocate-disk: %w", err)
 		}
 	}
 
