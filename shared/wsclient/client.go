@@ -226,9 +226,21 @@ func (c *Client) runOnce(ctx context.Context) error {
 	}
 
 	missedBeats := 0
-	lastBeat := time.Now()
 	beatTicker := time.NewTicker(c.cfg.HeartbeatInterval)
 	defer beatTicker.Stop()
+
+	// Liveness via WS ping/pong with a read deadline. A half-open TCP
+	// connection (peer sent FIN, our writes still buffer locally and appear to
+	// succeed) cannot be detected by checking only that the app-level heartbeat
+	// write returned nil — it always does until the OS gives up minutes later.
+	// Instead we set a read deadline that every inbound frame (and every pong)
+	// extends; if the backend stops answering pings the read deadline fires,
+	// ReadMessage errors, and we reconnect. The backend's `ws` server answers
+	// ping frames with pongs automatically.
+	_ = conn.SetReadDeadline(time.Now().Add(c.cfg.HeartbeatTimeout))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(c.cfg.HeartbeatTimeout))
+	})
 
 	readErrCh := make(chan error, 1)
 	go func() { readErrCh <- c.readLoop(ctx, conn) }()
@@ -242,15 +254,24 @@ func (c *Client) runOnce(ctx context.Context) error {
 			return err
 
 		case <-beatTicker.C:
+			// A control ping shares the write path with app frames, so a dead
+			// peer surfaces here as a write error too — but the authoritative
+			// signal is the read deadline the pong (or any frame) resets.
+			if err := conn.WriteControl(
+				websocket.PingMessage,
+				nil,
+				time.Now().Add(10*time.Second),
+			); err != nil {
+				return fmt.Errorf("ping write failed: %w", err)
+			}
 			if err := c.sendHeartbeat(conn); err != nil {
 				missedBeats++
 				c.log.Warn("wsclient: heartbeat failed", "miss", missedBeats, "err", err)
+				if missedBeats >= 3 {
+					return fmt.Errorf("heartbeat send failed %d times: %w", missedBeats, err)
+				}
 			} else {
-				lastBeat = time.Now()
 				missedBeats = 0
-			}
-			if time.Since(lastBeat) > c.cfg.HeartbeatTimeout {
-				return fmt.Errorf("heartbeat timeout (%v since last ack)", time.Since(lastBeat))
 			}
 		}
 	}
@@ -316,6 +337,9 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 		if err != nil {
 			return fmt.Errorf("read: %w", err)
 		}
+		// Any inbound frame proves the connection is alive — extend the read
+		// deadline so a busy link never trips the liveness timeout.
+		_ = conn.SetReadDeadline(time.Now().Add(c.cfg.HeartbeatTimeout))
 		// The gateway sends JSON control frames (e.g. cloud.hello,
 		// cloud.registered) as text messages. Only binary frames can carry signed
 		// CBOR job envelopes, so ignore non-binary traffic like the Rust wsclient.
@@ -350,11 +374,47 @@ func (c *Client) readLoop(ctx context.Context, conn *websocket.Conn) error {
 			)
 		}
 		if result != nil {
-			if sendErr := c.SendRaw(result); sendErr != nil {
+			// Wrap the handler result with the job id so the gateway can
+			// correlate it even when several signed requests are in flight on
+			// this connection — bare payloads are only attributable when
+			// exactly one request is pending, anything else gets dropped.
+			if sendErr := c.SendRaw(wrapJobResult(env.JobID, result)); sendErr != nil {
 				c.log.Error("wsclient: send result failed", "err", sendErr)
 			}
 		}
 	}
+}
+
+// wrapJobResult envelopes a raw handler result as {type:"result", jobId,
+// payload|error} for response correlation. The handler's bytes are passed
+// through verbatim under "payload" when they are valid JSON; handler error
+// bodies ({"error": "..."}) keep their error string at the top level so the
+// gateway rejects the pending request instead of resolving it.
+func wrapJobResult(jobID string, result []byte) []byte {
+	var parsed any
+	if err := json.Unmarshal(result, &parsed); err != nil {
+		parsed = string(result)
+	}
+
+	wrapper := map[string]any{
+		"type":  "result",
+		"jobId": jobID,
+	}
+	if obj, ok := parsed.(map[string]any); ok {
+		if errMsg, ok := obj["error"].(string); ok && errMsg != "" {
+			wrapper["error"] = errMsg
+		} else {
+			wrapper["payload"] = parsed
+		}
+	} else {
+		wrapper["payload"] = parsed
+	}
+
+	wrapped, err := json.Marshal(wrapper)
+	if err != nil {
+		return result
+	}
+	return wrapped
 }
 
 // sendHeartbeat sends the 15-second heartbeat frame (architecture §5).

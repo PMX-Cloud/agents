@@ -208,6 +208,13 @@ func run(cfg *hypCfg.Config, log *slog.Logger, kind provider.Kind) error {
 	capabilitiesMap := map[string]any{
 		"hypervisor.provider": caps.Hypervisor,
 	}
+	// Proxmox and libvirt providers implement VM and container lifecycle; the
+	// backend capability gate keys VM/CT ops on these flags. Without them the
+	// gate refuses every vm.*/ct.* op even though the provider supports them.
+	if caps.Hypervisor == "proxmox" || caps.Hypervisor == "libvirt" {
+		capabilitiesMap["hypervisor.vm"] = true
+		capabilitiesMap["hypervisor.ct"] = true
+	}
 	if len(caps.Storage) > 0 {
 		capabilitiesMap["storage"] = caps.Storage
 	}
