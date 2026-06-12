@@ -7,6 +7,7 @@ and upgraded: no bash -c, exec only, arguments as separate elements.
 package proxmox
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 )
@@ -177,7 +178,10 @@ func BoolParam(params map[string]any, key string) bool {
 	return false
 }
 
-// IntParam extracts an int param with a fallback.
+// IntParam extracts an int param with a fallback. Accepts every numeric type
+// a decoder might produce: JSON yields float64, but CBOR (the signed-envelope
+// transport) yields int64/uint64 — handling only float64/int silently dropped
+// every numeric param to its default (e.g. memory/cores reset to 1024/1).
 func IntParam(params map[string]any, key string, fallback int) int {
 	v, ok := params[key]
 	if !ok {
@@ -186,8 +190,32 @@ func IntParam(params map[string]any, key string, fallback int) int {
 	switch t := v.(type) {
 	case float64:
 		return int(t)
+	case float32:
+		return int(t)
 	case int:
 		return t
+	case int8:
+		return int(t)
+	case int16:
+		return int(t)
+	case int32:
+		return int(t)
+	case int64:
+		return int(t)
+	case uint:
+		return int(t)
+	case uint8:
+		return int(t)
+	case uint16:
+		return int(t)
+	case uint32:
+		return int(t)
+	case uint64:
+		return int(t)
+	case json.Number:
+		if n, err := t.Int64(); err == nil {
+			return int(n)
+		}
 	}
 	return fallback
 }
