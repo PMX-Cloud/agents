@@ -9,26 +9,41 @@ Security rationale: /proc/<pid>/cmdline and /proc/<pid>/environ are world-readab
 Any secret passed there is visible to all processes on the host. Delivering the
 envelope on stdin keeps the child's cmdline/environ clean.
 
-The envelope is passed via `--property=StandardInputData=<base64>`: systemd
-base64-decodes it and wires it to the unit's standard input, which the child
-reads. (The previous `StandardInput=fd:3` + sealed-memfd form never worked:
-`fd:NAME` references a *named* descriptor, not a numeric one, so the transient
-unit failed before exec and was garbage-collected.)
+The envelope is staged in a 0600 root:root tmpfs file and passed via
+`--property=StandardInputFile=<path>`: systemd (PID1, root) opens the file as the
+unit's stdin before dropping to the unit's User=, and the child reads it from
+stdin. Only the non-sensitive PATH appears in systemd-run's argv — the envelope
+bytes are never in any process's cmdline or environ. The file is unlinked shortly
+after the unit starts (the open fd survives the unlink).
+
+(The previous `StandardInput=fd:3` + sealed-memfd form never worked: `fd:NAME`
+references a *named* descriptor, not a numeric one, so the transient unit failed
+before exec and was garbage-collected. `StandardInputData=<base64>` would have
+worked but leaked the envelope into systemd-run's argv.)
 */
 package spawn
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/pmx-cloud/agents/shared/envelope"
 )
+
+// defaultEnvFileDir is the tmpfs directory where the signed envelope is staged
+// for delivery to the ephemeral unit via StandardInputFile.
+const defaultEnvFileDir = "/run/pmx-cloud"
+
+// envFileCleanupDelay is how long to wait after systemd-run before unlinking the
+// staged envelope file. systemd opens StandardInputFile as it starts the unit
+// (well within this window); the open fd survives the unlink.
+const envFileCleanupDelay = 30 * time.Second
 
 // EphemeralRequest describes a request to spawn an ephemeral agent.
 type EphemeralRequest struct {
@@ -48,9 +63,32 @@ type Spawner struct {
 	// cmdRunner is used to execute the systemd-run command. It is
 	// injected in tests to avoid requiring root/systemd on the test host.
 	cmdRunner func(ctx context.Context, args []string, extraFile *os.File) ([]byte, error)
-	// memfdCreator creates the sealed envelope fd. Injected in tests so
-	// non-Linux dev machines can exercise the full Spawn() path.
+	// memfdCreator creates the sealed envelope fd. Retained for the injectable
+	// test seam; the production path now stages the envelope to envFileDir and
+	// delivers it via StandardInputFile.
 	memfdCreator func(env []byte) (int, error)
+	// envFileDir is the directory where the signed envelope is staged before
+	// systemd opens it as the unit's stdin. Tests point this at a writable temp
+	// dir; production uses defaultEnvFileDir.
+	envFileDir string
+}
+
+// writeEnvFile stages the marshaled envelope in a 0600 file under envFileDir and
+// returns its path. The filename is derived from a sanitized jobID so a hostile
+// id cannot escape the directory.
+func (s *Spawner) writeEnvFile(jobID string, data []byte) (string, error) {
+	dir := s.envFileDir
+	if dir == "" {
+		dir = defaultEnvFileDir
+	}
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, filepath.Base(jobID)+".env")
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 type templateProfile struct {
@@ -92,7 +130,7 @@ func NewSpawner(log *slog.Logger) *Spawner {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Spawner{log: log, cmdRunner: defaultCmdRunner, memfdCreator: createSealedMemfd}
+	return &Spawner{log: log, cmdRunner: defaultCmdRunner, memfdCreator: createSealedMemfd, envFileDir: defaultEnvFileDir}
 }
 
 // defaultCmdRunner executes systemd-run with the given args. extraFile is
@@ -119,16 +157,21 @@ func (s *Spawner) Spawn(ctx context.Context, req EphemeralRequest) error {
 		return fmt.Errorf("spawn: envelope is required")
 	}
 
-	// Encode the envelope to CBOR, then base64 so it can be handed to systemd
-	// via --property=StandardInputData= (delivered to the child on stdin).
+	// Encode the envelope to CBOR and write it to a 0600 root:root tmpfs file.
+	// systemd (PID1) opens it as the unit's stdin via StandardInputFile; only
+	// the file PATH (not the envelope bytes) appears in systemd-run's argv, so
+	// the signed envelope never leaks through /proc/<pid>/cmdline or environ.
 	envBytes, err := req.Envelope.Marshal()
 	if err != nil {
 		return fmt.Errorf("spawn: marshal envelope: %w", err)
 	}
-	envelopeB64 := base64.StdEncoding.EncodeToString(envBytes)
+	envPath, err := s.writeEnvFile(req.JobID, envBytes)
+	if err != nil {
+		return fmt.Errorf("spawn: write envelope file: %w", err)
+	}
 
 	profile := profileForTemplate(req.Template)
-	args := buildSpawnArgs(req, profile, envelopeB64)
+	args := buildSpawnArgs(req, profile, envPath)
 
 	s.log.Info("spawn: starting ephemeral unit",
 		"unit", InstantiateTemplate(req.Template, req.JobID),
@@ -138,8 +181,16 @@ func (s *Spawner) Spawn(ctx context.Context, req EphemeralRequest) error {
 
 	out, err := s.cmdRunner(ctx, args, nil)
 	if err != nil {
+		_ = os.Remove(envPath)
 		return fmt.Errorf("spawn: systemd-run %s: %w\n%s", args[1], err, out)
 	}
+	// systemd opens StandardInputFile as it starts the unit (within ~1s); the
+	// open fd survives unlink, so remove the path shortly after to avoid leaving
+	// signed envelopes on disk.
+	go func() {
+		time.Sleep(envFileCleanupDelay)
+		_ = os.Remove(envPath)
+	}()
 	return nil
 }
 

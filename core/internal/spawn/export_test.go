@@ -13,7 +13,7 @@ func newSpawnerWithRunner(log *slog.Logger, runner func(ctx context.Context, arg
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Spawner{log: log, cmdRunner: runner, memfdCreator: createSealedMemfd}
+	return &Spawner{log: log, cmdRunner: runner, memfdCreator: createSealedMemfd, envFileDir: os.TempDir()}
 }
 
 // newSpawnerWithRunnerAndMemfd injects both the runner and the memfd creator,
@@ -26,5 +26,5 @@ func newSpawnerWithRunnerAndMemfd(
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Spawner{log: log, cmdRunner: runner, memfdCreator: memfd}
+	return &Spawner{log: log, cmdRunner: runner, memfdCreator: memfd, envFileDir: os.TempDir()}
 }
