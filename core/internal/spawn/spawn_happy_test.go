@@ -3,7 +3,6 @@ package spawn
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"errors"
 	"log/slog"
 	"os"
@@ -14,10 +13,10 @@ import (
 	"github.com/pmx-cloud/agents/shared/envelope"
 )
 
-// standardInputDataArg returns the base64 payload of the
-// --property=StandardInputData= arg, or "" if absent.
-func standardInputDataArg(args []string) string {
-	const prefix = "--property=StandardInputData="
+// standardInputFileArg returns the path of the --property=StandardInputFile=
+// arg, or "" if absent.
+func standardInputFileArg(args []string) string {
+	const prefix = "--property=StandardInputFile="
 	for _, a := range args {
 		if strings.HasPrefix(a, prefix) {
 			return strings.TrimPrefix(a, prefix)
@@ -80,9 +79,9 @@ func TestSpawn_FullHappyPath(t *testing.T) {
 	if len(gotArgs) == 0 || gotArgs[0] != "systemd-run" {
 		t.Fatalf("expected systemd-run as args[0], got %v", gotArgs)
 	}
-	// The signed envelope must be delivered on stdin via StandardInputData.
-	if standardInputDataArg(gotArgs) == "" {
-		t.Fatalf("envelope not passed via StandardInputData: %v", gotArgs)
+	// The signed envelope must be delivered on stdin via StandardInputFile.
+	if standardInputFileArg(gotArgs) == "" {
+		t.Fatalf("envelope not passed via StandardInputFile: %v", gotArgs)
 	}
 }
 
@@ -105,9 +104,10 @@ func TestSpawn_RunnerErrorIsWrapped(t *testing.T) {
 	}
 }
 
-// The envelope must round-trip through StandardInputData: base64-decoding the
-// arg yields exactly the marshaled envelope the child will read on stdin.
-func TestSpawn_EnvelopeRoundTripsViaStandardInputData(t *testing.T) {
+// The envelope must round-trip through StandardInputFile: the staged file
+// contains exactly the marshaled envelope the child will read on stdin, and the
+// file is mode 0600 (no broad disclosure).
+func TestSpawn_EnvelopeRoundTripsViaStandardInputFile(t *testing.T) {
 	var gotArgs []string
 	runner := func(_ context.Context, args []string, _ *os.File) ([]byte, error) {
 		gotArgs = append([]string(nil), args...)
@@ -118,7 +118,8 @@ func TestSpawn_EnvelopeRoundTripsViaStandardInputData(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal envelope: %v", err)
 	}
-	s := newSpawnerWithRunnerAndMemfd(slog.Default(), runner, tmpfileMemfd)
+	s := newSpawnerWithRunner(slog.Default(), runner)
+	s.envFileDir = t.TempDir()
 	if err := s.Spawn(context.Background(), EphemeralRequest{
 		Template: "pmx-hardware-installer@.service",
 		JobID:    "roundtrip-001",
@@ -126,16 +127,23 @@ func TestSpawn_EnvelopeRoundTripsViaStandardInputData(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Spawn: %v", err)
 	}
-	b64 := standardInputDataArg(gotArgs)
-	if b64 == "" {
-		t.Fatalf("no StandardInputData arg: %v", gotArgs)
+	path := standardInputFileArg(gotArgs)
+	if path == "" {
+		t.Fatalf("no StandardInputFile arg: %v", gotArgs)
 	}
-	got, err := base64.StdEncoding.DecodeString(b64)
+	info, err := os.Stat(path)
 	if err != nil {
-		t.Fatalf("StandardInputData is not valid base64: %v", err)
+		t.Fatalf("staged envelope file missing: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Errorf("staged envelope file mode = %o, want 600", perm)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read staged envelope: %v", err)
 	}
 	if !bytes.Equal(got, want) {
-		t.Fatalf("decoded envelope (%d bytes) != marshaled envelope (%d bytes)", len(got), len(want))
+		t.Fatalf("staged envelope (%d bytes) != marshaled envelope (%d bytes)", len(got), len(want))
 	}
 }
 

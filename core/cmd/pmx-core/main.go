@@ -132,9 +132,26 @@ func run(cfg *coreCfg.Config, configPath string, log *slog.Logger) error {
 	cache := envpkg.NewReplayCache(100_000, 24*time.Hour)
 	defer cache.Close()
 
-	// Host fingerprint.
+	// Host fingerprint: prefer the canonical provisioned file
+	// (/etc/pmx-cloud/host-fingerprint) that every agent on the host shares, so
+	// pmx-core reports the SAME fingerprint the backend signs envelopes with
+	// (and that the ephemeral console-broker verifies against). Fall back to the
+	// freshly computed value only when the file is missing or empty. Without
+	// this, pmx-core computes a different fingerprint than the file-reading
+	// agents, and console-broker spawns fail envelope verification with a host
+	// fingerprint mismatch.
 	hostInfo := capability.Collect(ctx)
 	fingerprint := hostInfo.HostFingerprint
+	if path := strings.TrimSpace(cfg.Identity.HostFingerprintFile); path != "" {
+		if raw, readErr := os.ReadFile(path); readErr != nil {
+			log.Warn("host fingerprint file unreadable; using computed fingerprint",
+				"path", path, "err", readErr)
+		} else if fp := strings.TrimSpace(string(raw)); fp != "" {
+			fingerprint = fp
+		} else {
+			log.Warn("host fingerprint file is empty; using computed fingerprint", "path", path)
+		}
+	}
 
 	// ── Audit log ────────────────────────────────────────────────────────────
 	auditLog, err := audit.Open("/var/log/pmx-cloud/pmx-core.audit.log")

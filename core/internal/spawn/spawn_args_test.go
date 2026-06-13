@@ -109,7 +109,7 @@ func TestBuildSpawnArgs_HardwareInstaller(t *testing.T) {
 		JobID:    "job-001",
 	}
 	profile := profileForTemplate(req.Template)
-	args := buildSpawnArgs(req, profile, "ZW52ZWxvcGU=")
+	args := buildSpawnArgs(req, profile, "/run/pmx-cloud/test.env")
 
 	if args[0] != "systemd-run" {
 		t.Fatalf("args[0] = %q, want systemd-run", args[0])
@@ -142,15 +142,15 @@ func TestBuildSpawnArgs_ConsoleBroker(t *testing.T) {
 		JobID:    "sess-42",
 	}
 	profile := profileForTemplate(req.Template)
-	args := buildSpawnArgs(req, profile, "ZW52ZWxvcGU=")
+	args := buildSpawnArgs(req, profile, "/run/pmx-cloud/test.env")
 
 	joined := strings.Join(args, " ")
 
-	if !strings.Contains(joined, "--property=StandardInputData=ZW52ZWxvcGU=") {
-		t.Errorf("envelope must be passed via StandardInputData, got: %v", args)
+	if !strings.Contains(joined, "--property=StandardInputFile=/run/pmx-cloud/test.env") {
+		t.Errorf("envelope must be passed via StandardInputFile, got: %v", args)
 	}
-	if strings.Contains(joined, "StandardInput=fd:") {
-		t.Errorf("must not use the broken StandardInput=fd: form, got: %v", args)
+	if strings.Contains(joined, "StandardInput=fd:") || strings.Contains(joined, "StandardInputData=") {
+		t.Errorf("must not leak the envelope via fd: or StandardInputData argv, got: %v", args)
 	}
 	if !strings.Contains(joined, "AppArmorProfile=pmx-console-broker") {
 		t.Errorf("missing AppArmorProfile in args: %v", args)
@@ -171,7 +171,7 @@ func TestBuildSpawnArgs_CustomRuntimeMaxSec(t *testing.T) {
 		RuntimeMaxSec: 3600,
 	}
 	profile := profileForTemplate(req.Template)
-	args := buildSpawnArgs(req, profile, "ZW52ZWxvcGU=")
+	args := buildSpawnArgs(req, profile, "/run/pmx-cloud/test.env")
 
 	joined := strings.Join(args, " ")
 	if !strings.Contains(joined, "RuntimeMaxSec=3600") {
@@ -189,7 +189,7 @@ func TestBuildSpawnArgs_NoRuntimeForOneshot(t *testing.T) {
 		JobID:    "job-x",
 	}
 	profile := profileForTemplate(req.Template)
-	args := buildSpawnArgs(req, profile, "ZW52ZWxvcGU=")
+	args := buildSpawnArgs(req, profile, "/run/pmx-cloud/test.env")
 
 	for _, a := range args {
 		if strings.HasPrefix(a, "--property=RuntimeMaxSec=") {
