@@ -2,27 +2,24 @@
 Package spawn implements the ephemeral agent spawning mechanism for pmx-core.
 
 Architecture §5.1 mandates that pmx-hardware-installer, pmx-updater, and
-pmx-console-broker be spawned via systemd-run with the signed envelope passed
-via a sealed memfd file descriptor — NEVER via argv or environment variables.
+pmx-console-broker be spawned via systemd-run with the signed envelope delivered
+on the child's stdin — NEVER via argv or environment variables.
 
 Security rationale: /proc/<pid>/cmdline and /proc/<pid>/environ are world-readable.
-Any secret passed there is visible to all processes on the host.
+Any secret passed there is visible to all processes on the host. Delivering the
+envelope on stdin keeps the child's cmdline/environ clean.
 
-The sealed memfd approach:
- 1. memfd_create with MFD_CLOEXEC | MFD_ALLOW_SEALING.
- 2. Write the canonical CBOR envelope bytes.
- 3. Seal with F_SEAL_WRITE | F_SEAL_GROW | F_SEAL_SHRINK | F_SEAL_SEAL.
-    After sealing, the contents cannot be modified even by the spawning process.
- 4. Pass the fd to systemd-run as ExtraFiles[0], then bind stdin to fd:3 via
-    --property=StandardInput=fd:3.
-
-Note: memfd_create is Linux-only. On macOS (dev) the spawn call will return an
-error at runtime; this is expected and does not break unit tests of other packages.
+The envelope is passed via `--property=StandardInputData=<base64>`: systemd
+base64-decodes it and wires it to the unit's standard input, which the child
+reads. (The previous `StandardInput=fd:3` + sealed-memfd form never worked:
+`fd:NAME` references a *named* descriptor, not a numeric one, so the transient
+unit failed before exec and was garbage-collected.)
 */
 package spawn
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log/slog"
 	"os"
@@ -98,10 +95,14 @@ func NewSpawner(log *slog.Logger) *Spawner {
 	return &Spawner{log: log, cmdRunner: defaultCmdRunner, memfdCreator: createSealedMemfd}
 }
 
-// defaultCmdRunner executes systemd-run with the given args and extra file.
+// defaultCmdRunner executes systemd-run with the given args. extraFile is
+// retained for the injectable signature but is only attached when non-nil
+// (the envelope now travels via --property=StandardInputData, not an fd).
 func defaultCmdRunner(ctx context.Context, args []string, extraFile *os.File) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, args[0], args[1:]...)
-	cmd.ExtraFiles = []*os.File{extraFile}
+	if extraFile != nil {
+		cmd.ExtraFiles = []*os.File{extraFile}
+	}
 	return cmd.CombinedOutput()
 }
 
@@ -118,26 +119,16 @@ func (s *Spawner) Spawn(ctx context.Context, req EphemeralRequest) error {
 		return fmt.Errorf("spawn: envelope is required")
 	}
 
-	// Encode the envelope to CBOR.
+	// Encode the envelope to CBOR, then base64 so it can be handed to systemd
+	// via --property=StandardInputData= (delivered to the child on stdin).
 	envBytes, err := req.Envelope.Marshal()
 	if err != nil {
 		return fmt.Errorf("spawn: marshal envelope: %w", err)
 	}
-
-	// Create the sealed memfd and get its fd number.
-	fd, err := s.memfdCreator(envBytes)
-	if err != nil {
-		return fmt.Errorf("spawn: sealed memfd: %w", err)
-	}
-	envFD := os.NewFile(uintptr(fd), "pmx-envelope")
-	if envFD == nil {
-		closeFd(fd)
-		return fmt.Errorf("spawn: failed to wrap memfd")
-	}
-	defer envFD.Close()
+	envelopeB64 := base64.StdEncoding.EncodeToString(envBytes)
 
 	profile := profileForTemplate(req.Template)
-	args := buildSpawnArgs(req, profile)
+	args := buildSpawnArgs(req, profile, envelopeB64)
 
 	s.log.Info("spawn: starting ephemeral unit",
 		"unit", InstantiateTemplate(req.Template, req.JobID),
@@ -145,7 +136,7 @@ func (s *Spawner) Spawn(ctx context.Context, req EphemeralRequest) error {
 		"PMX_JOB_ID", req.JobID,
 	)
 
-	out, err := s.cmdRunner(ctx, args, envFD)
+	out, err := s.cmdRunner(ctx, args, nil)
 	if err != nil {
 		return fmt.Errorf("spawn: systemd-run %s: %w\n%s", args[1], err, out)
 	}

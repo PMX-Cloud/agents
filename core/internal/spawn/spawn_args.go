@@ -10,13 +10,21 @@ import "fmt"
 // buildSpawnArgs assembles the systemd-run argument list for an ephemeral
 // agent unit. It is a pure function — no OS calls — so it can be tested
 // without root or systemd.
-func buildSpawnArgs(req EphemeralRequest, profile templateProfile) []string {
+//
+// The signed envelope is delivered to the child's stdin via
+// `--property=StandardInputData=<base64>`: systemd base64-decodes it and wires
+// it to the unit's standard input. The earlier `StandardInput=fd:3` form never
+// worked — `fd:NAME` references a *named* descriptor, not a numeric one, so the
+// transient unit failed pre-exec and was garbage-collected. StandardInputData
+// keeps the child's /proc/<pid>/cmdline and environ clean (the data arrives on
+// stdin, not argv/env), preserving the original no-secrets-in-argv intent.
+func buildSpawnArgs(req EphemeralRequest, profile templateProfile, envelopeB64 string) []string {
 	unitName := InstantiateTemplate(req.Template, req.JobID)
 
 	args := []string{
 		"systemd-run",
 		"--unit=" + unitName,
-		"--property=StandardInput=fd:3",
+		"--property=StandardInputData=" + envelopeB64,
 		fmt.Sprintf("--property=Type=%s", profile.ServiceType),
 		fmt.Sprintf("--property=User=%s", profile.User),
 		fmt.Sprintf("--property=Group=%s", profile.Group),
