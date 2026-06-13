@@ -1,15 +1,30 @@
 package spawn
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/pmx-cloud/agents/shared/envelope"
 )
+
+// standardInputDataArg returns the base64 payload of the
+// --property=StandardInputData= arg, or "" if absent.
+func standardInputDataArg(args []string) string {
+	const prefix = "--property=StandardInputData="
+	for _, a := range args {
+		if strings.HasPrefix(a, prefix) {
+			return strings.TrimPrefix(a, prefix)
+		}
+	}
+	return ""
+}
 
 // tmpfileMemfd is a non-Linux substitute for createSealedMemfd: it writes the
 // bytes to a tempfile and returns the file descriptor. This lets dev machines
@@ -48,10 +63,8 @@ func okEnvelope() *envelope.Envelope {
 
 func TestSpawn_FullHappyPath(t *testing.T) {
 	var gotArgs []string
-	var gotFD *os.File
-	runner := func(_ context.Context, args []string, fd *os.File) ([]byte, error) {
+	runner := func(_ context.Context, args []string, _ *os.File) ([]byte, error) {
 		gotArgs = append([]string(nil), args...)
-		gotFD = fd
 		return nil, nil
 	}
 	s := newSpawnerWithRunnerAndMemfd(slog.Default(), runner, tmpfileMemfd)
@@ -67,8 +80,9 @@ func TestSpawn_FullHappyPath(t *testing.T) {
 	if len(gotArgs) == 0 || gotArgs[0] != "systemd-run" {
 		t.Fatalf("expected systemd-run as args[0], got %v", gotArgs)
 	}
-	if gotFD == nil {
-		t.Fatal("runner did not receive extra file")
+	// The signed envelope must be delivered on stdin via StandardInputData.
+	if standardInputDataArg(gotArgs) == "" {
+		t.Fatalf("envelope not passed via StandardInputData: %v", gotArgs)
 	}
 }
 
@@ -91,22 +105,37 @@ func TestSpawn_RunnerErrorIsWrapped(t *testing.T) {
 	}
 }
 
-func TestSpawn_MemfdErrorBubbles(t *testing.T) {
-	failMemfd := func([]byte) (int, error) {
-		return -1, errors.New("memfd: nope")
-	}
-	runnerNotCalled := func(_ context.Context, _ []string, _ *os.File) ([]byte, error) {
-		t.Fatal("runner must not be called when memfd fails")
+// The envelope must round-trip through StandardInputData: base64-decoding the
+// arg yields exactly the marshaled envelope the child will read on stdin.
+func TestSpawn_EnvelopeRoundTripsViaStandardInputData(t *testing.T) {
+	var gotArgs []string
+	runner := func(_ context.Context, args []string, _ *os.File) ([]byte, error) {
+		gotArgs = append([]string(nil), args...)
 		return nil, nil
 	}
-	s := newSpawnerWithRunnerAndMemfd(slog.Default(), runnerNotCalled, failMemfd)
-	err := s.Spawn(context.Background(), EphemeralRequest{
+	env := okEnvelope()
+	want, err := env.Marshal()
+	if err != nil {
+		t.Fatalf("marshal envelope: %v", err)
+	}
+	s := newSpawnerWithRunnerAndMemfd(slog.Default(), runner, tmpfileMemfd)
+	if err := s.Spawn(context.Background(), EphemeralRequest{
 		Template: "pmx-hardware-installer@.service",
-		JobID:    "memfd-fail-001",
-		Envelope: okEnvelope(),
-	})
-	if err == nil {
-		t.Fatal("expected memfd error")
+		JobID:    "roundtrip-001",
+		Envelope: env,
+	}); err != nil {
+		t.Fatalf("Spawn: %v", err)
+	}
+	b64 := standardInputDataArg(gotArgs)
+	if b64 == "" {
+		t.Fatalf("no StandardInputData arg: %v", gotArgs)
+	}
+	got, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		t.Fatalf("StandardInputData is not valid base64: %v", err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Fatalf("decoded envelope (%d bytes) != marshaled envelope (%d bytes)", len(got), len(want))
 	}
 }
 
