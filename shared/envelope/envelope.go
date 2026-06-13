@@ -13,6 +13,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -33,6 +34,14 @@ const (
 // It is initialised once so the configuration is shared across all calls.
 var cborEM cbor.EncMode
 
+// cborDM is the module-level decoding mode. It forces nested maps decoded into
+// interface{} slots (e.g. Params["options"]) to use map[string]interface{}
+// instead of the fxamacker/cbor default map[interface{}]interface{}. Agent
+// handlers type-assert params["options"].(map[string]any); without this the
+// assertion silently fails and nested-map commands (vm.update / ct.update)
+// are rejected with "options map is required".
+var cborDM cbor.DecMode
+
 func init() {
 	opts := cbor.CoreDetEncOptions()
 	// Encode time.Time as RFC3339Nano text strings so Rust/ciborium + chrono
@@ -44,6 +53,14 @@ func init() {
 		panic("envelope: failed to create CBOR encoding mode: " + err.Error())
 	}
 	cborEM = em
+
+	dm, err := cbor.DecOptions{
+		DefaultMapType: reflect.TypeOf(map[string]interface{}(nil)),
+	}.DecMode()
+	if err != nil {
+		panic("envelope: failed to create CBOR decoding mode: " + err.Error())
+	}
+	cborDM = dm
 }
 
 // Envelope is the canonical job envelope exchanged between the backend and every
@@ -183,7 +200,7 @@ func (e *Envelope) Sign(priv ed25519.PrivateKey) error {
 // Unmarshal decodes a CBOR-encoded wire message into an Envelope.
 func Unmarshal(data []byte) (*Envelope, error) {
 	var e Envelope
-	if err := cbor.Unmarshal(data, &e); err != nil {
+	if err := cborDM.Unmarshal(data, &e); err != nil {
 		return nil, fmt.Errorf("envelope: unmarshal: %w", err)
 	}
 	return &e, nil

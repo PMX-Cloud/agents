@@ -258,6 +258,36 @@ func TestEnvelope_MarshalUnmarshal(t *testing.T) {
 	}
 }
 
+// TestEnvelope_UnmarshalNestedMapStringKeyed pins the contract that nested
+// maps in Params decode as map[string]interface{}, not the CBOR default
+// map[interface{}]interface{}. Agent handlers (e.g. vm.update / ct.update)
+// type-assert params["options"].(map[string]any); the default decode mode
+// silently fails that assertion and rejects the job as "options map is
+// required".
+func TestEnvelope_UnmarshalNestedMapStringKeyed(t *testing.T) {
+	_, priv := newKeypair(t)
+	e := buildValidEnvelope(priv)
+	e.Command = "vm.update"
+	e.Params = map[string]interface{}{
+		"vmid":    "201",
+		"options": map[string]interface{}{"cores": 2, "memory": 2048},
+	}
+	if err := e.Sign(priv); err != nil {
+		t.Fatalf("Sign: %v", err)
+	}
+	data, err := e.Marshal()
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	e2, err := envelope.Unmarshal(data)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if _, ok := e2.Params["options"].(map[string]interface{}); !ok {
+		t.Fatalf("nested options decoded as %T, want map[string]interface{}", e2.Params["options"])
+	}
+}
+
 func TestEnvelope_UnmarshalBadCBOR(t *testing.T) {
 	_, err := envelope.Unmarshal([]byte("not cbor"))
 	if err == nil {
