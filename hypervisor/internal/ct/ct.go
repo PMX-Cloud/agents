@@ -4,7 +4,6 @@ package ct
 import (
 	"context"
 	"fmt"
-	"os"
 
 	"github.com/pmx-cloud/agents/hypervisor/internal/proxmox"
 )
@@ -62,13 +61,7 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 	if hostname != "" {
 		args = append(args, "--hostname", hostname)
 	}
-	if res, err := px.Pct(ctx, args...); err != nil {
-		var se string
-		if res != nil {
-			se = string(res.Stderr)
-		}
-		_ = os.WriteFile("/tmp/pmx-ct-debug.log",
-			[]byte(fmt.Sprintf("storage=%s\nargs=%v\nstderr:\n%s\n", storage, args, se)), 0o644)
+	if _, err := px.Pct(ctx, args...); err != nil {
 		return fmt.Errorf("ct.create: %w", err)
 	}
 	stepFn("done")
