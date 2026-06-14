@@ -12,6 +12,7 @@ import (
 type nodeStorage struct {
 	Storage string `json:"storage"`
 	Content string `json:"content"`
+	Type    string `json:"type"`
 	Active  int    `json:"active"`
 	Enabled int    `json:"enabled"`
 	Avail   int64  `json:"avail"`
@@ -41,13 +42,36 @@ func ResolveStorage(ctx context.Context, px ExecIface, requested, contentType st
 		return requested
 	}
 
-	var best string
-	var bestAvail int64 = -1
+	// A CT root filesystem ("rootdir") on a "dir" storage is a .raw file attached
+	// via a loop device (losetup), which fails under the agent; prefer block
+	// storage (lvm/lvmthin/zfspool/…). Block storages are local and activate on
+	// demand, so for rootdir we accept an *enabled* block even when the node's
+	// storage status currently reports it inactive (active=0) — pct/qm activate
+	// it during create. VM disks ("images") run fine on "dir" (plain raw file,
+	// no loop) and keep the simple largest-active choice.
+	preferBlock := contentType == "rootdir"
+
+	var best, bestBlock string
+	var bestAvail, bestBlockAvail int64 = -1, -1
 	for _, s := range storages {
-		if s.Active != 1 || !strings.Contains(s.Content, contentType) {
+		if s.Enabled != 1 || !strings.Contains(s.Content, contentType) {
 			continue
 		}
-		if s.Storage == requested {
+
+		if preferBlock && isBlockStorage(s.Type) {
+			if bestBlock == "" || s.Avail > bestBlockAvail {
+				bestBlock = s.Storage
+				bestBlockAvail = s.Avail
+			}
+			continue
+		}
+
+		// Non-block storage (and all VM-image selection): only trust storage the
+		// node reports active, so we never pick a down network share.
+		if s.Active != 1 {
+			continue
+		}
+		if s.Storage == requested && !preferBlock {
 			return requested
 		}
 		if s.Avail > bestAvail {
@@ -56,10 +80,24 @@ func ResolveStorage(ctx context.Context, px ExecIface, requested, contentType st
 		}
 	}
 
+	if preferBlock && bestBlock != "" {
+		return bestBlock
+	}
 	if best == "" {
 		return requested
 	}
 	return best
+}
+
+// isBlockStorage reports whether a Proxmox storage type provisions native block
+// volumes, so a CT rootfs needs no loop device (losetup).
+func isBlockStorage(t string) bool {
+	switch t {
+	case "lvm", "lvmthin", "zfspool", "zfs", "rbd", "iscsi", "iscsidirect":
+		return true
+	default:
+		return false
+	}
 }
 
 // FormatDiskSpec renders a qm/pct volume allocation spec like "GB-250:32".
