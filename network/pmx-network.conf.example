@@ -19,9 +19,13 @@ interface = "pmxwg0"
 ruleset_dir = "/etc/nftables.d/pmx"
 max_rules_per_host = 10000
 
+# SAFETY: default_drop_input=false is the safe default — it prevents SSH
+# lockout on enrollment. Set to true only after confirming SSH access is
+# maintained via allow_ssh_from or an out-of-band path.
+# allow_ssh_from covers RFC-1918 private ranges as a belt-and-suspenders guard.
 [isolation]
-default_drop_input = true
-allow_ssh_from = []
+default_drop_input = false
+allow_ssh_from = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 [state]
 dir = "/var/lib/pmx-cloud/network"
