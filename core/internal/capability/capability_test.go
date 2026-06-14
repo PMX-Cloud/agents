@@ -2,6 +2,8 @@ package capability_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -42,6 +44,40 @@ func TestCollect_FingerprintIsStable(t *testing.T) {
 	fp2 := capability.Collect(context.Background()).HostFingerprint
 	if fp1 != fp2 {
 		t.Fatalf("fingerprint changed between calls: %q vs %q", fp1, fp2)
+	}
+}
+
+// The canonical host-fingerprint file (written once by the installer) is the
+// single source of truth: pmx-storage, the console-broker, and the backend all
+// use it to sign/route envelopes. The core agent must report the SAME value, so
+// when the file is present it MUST be preferred over a freshly computed hash.
+// Recomputing instead produced a mismatch (computed vs file) that broke console
+// session dispatch.
+func TestCollectWithPaths_PrefersCanonicalFingerprintFile(t *testing.T) {
+	capability.InvalidateCache()
+	dir := t.TempDir()
+	fpFile := filepath.Join(dir, "host-fingerprint")
+	const canonical = "08754c8600000000000000000000000000000000000000000000000000000000"
+	if err := os.WriteFile(fpFile, []byte(canonical+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	info := capability.CollectWithPaths(context.Background(), capability.FilePaths{
+		HostFingerprintFile: fpFile,
+	})
+	if info.HostFingerprint != canonical {
+		t.Fatalf("HostFingerprint = %q, want canonical file value %q", info.HostFingerprint, canonical)
+	}
+}
+
+func TestCollectWithPaths_FingerprintFallsBackToComputeWhenFileAbsent(t *testing.T) {
+	capability.InvalidateCache()
+	info := capability.CollectWithPaths(context.Background(), capability.FilePaths{
+		HostFingerprintFile: "/nonexistent/host-fingerprint",
+	})
+	fp := info.HostFingerprint
+	if len(fp) != 64 {
+		t.Fatalf("fallback fingerprint must be 64 hex chars, got %d: %q", len(fp), fp)
 	}
 }
 

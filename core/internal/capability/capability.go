@@ -121,12 +121,16 @@ type FilePaths struct {
 	OSRelease string // default: /etc/os-release
 	CPUInfo   string // default: /proc/cpuinfo
 	MemInfo   string // default: /proc/meminfo
+	// HostFingerprintFile is the canonical fingerprint written once by the
+	// installer; default: /etc/pmx-cloud/host-fingerprint.
+	HostFingerprintFile string
 }
 
 var defaultPaths = FilePaths{
-	OSRelease: "/etc/os-release",
-	CPUInfo:   "/proc/cpuinfo",
-	MemInfo:   "/proc/meminfo",
+	OSRelease:           "/etc/os-release",
+	CPUInfo:             "/proc/cpuinfo",
+	MemInfo:             "/proc/meminfo",
+	HostFingerprintFile: "/etc/pmx-cloud/host-fingerprint",
 }
 
 // collect does the actual data gathering.
@@ -147,8 +151,8 @@ func collectWithPaths(ctx context.Context, paths FilePaths) *HostInfo {
 		info.Hostname = h
 	}
 
-	// Host fingerprint: SHA-256(machine-id || primary-mac)
-	info.HostFingerprint = computeFingerprint()
+	// Host fingerprint: prefer the canonical file, fall back to computing it.
+	info.HostFingerprint = resolveFingerprint(paths.HostFingerprintFile)
 
 	// OS
 	info.OS = readOSReleaseFrom(paths.OSRelease)
@@ -179,6 +183,25 @@ func collectWithPaths(ctx context.Context, paths FilePaths) *HostInfo {
 	info.Agents = readAgentStatus(ctx, &info.Warnings)
 
 	return info
+}
+
+// resolveFingerprint prefers the canonical fingerprint file written once by the
+// installer so the core agent reports the SAME value the file-reading agents
+// (pmx-storage, pmx-console-broker, …) and the backend use to sign and route
+// envelopes. Recomputing here instead of reading the file produced a mismatch
+// (computed vs file) that silently broke console-session dispatch.
+//
+// It falls back to a freshly computed value only when the file is missing or
+// empty. That fallback must stay in sync with the installer's algorithm.
+func resolveFingerprint(path string) string {
+	if path != "" {
+		if data, err := os.ReadFile(path); err == nil {
+			if s := strings.TrimSpace(string(data)); s != "" {
+				return s
+			}
+		}
+	}
+	return computeFingerprint()
 }
 
 // computeFingerprint returns SHA-256(machine-id || primary-mac).
