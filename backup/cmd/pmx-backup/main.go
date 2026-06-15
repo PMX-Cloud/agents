@@ -65,7 +65,7 @@ func main() {
 		preflight.Check{
 			Name: "vzdump-binary-readable",
 			Run: func(ctx context.Context) error {
-				_, err := os.Stat(cfg.VZDump.Binary)
+				_, err := os.Stat(vzdump.ResolveBinary(cfg.VZDump.Binary))
 				return err
 			},
 		},
@@ -224,9 +224,9 @@ func (h *backupHandler) dispatch(ctx context.Context, env *envpkg.Envelope) ([]b
 		}
 
 		res, err := vzdump.Create(ctx, vzdump.Binaries{
-			VZDump:    h.cfg.VZDump.Binary,
-			QM:        h.cfg.VZDump.QMBinary,
-			QMRestore: h.cfg.VZDump.QMRestoreBinary,
+			VZDump:    vzdump.ResolveBinary(h.cfg.VZDump.Binary),
+			QM:        vzdump.ResolveBinary(h.cfg.VZDump.QMBinary),
+			QMRestore: vzdump.ResolveBinary(h.cfg.VZDump.QMRestoreBinary),
 		}, vzdump.CreateParams{
 			VMID:          vmid,
 			DumpDir:       dumpDir,
@@ -259,9 +259,9 @@ func (h *backupHandler) dispatch(ctx context.Context, env *envpkg.Envelope) ([]b
 		}
 
 		err = vzdump.Restore(ctx, vzdump.Binaries{
-			VZDump:    h.cfg.VZDump.Binary,
-			QM:        h.cfg.VZDump.QMBinary,
-			QMRestore: h.cfg.VZDump.QMRestoreBinary,
+			VZDump:    vzdump.ResolveBinary(h.cfg.VZDump.Binary),
+			QM:        vzdump.ResolveBinary(h.cfg.VZDump.QMBinary),
+			QMRestore: vzdump.ResolveBinary(h.cfg.VZDump.QMRestoreBinary),
 		}, vzdump.RestoreParams{
 			ArchivePath: resolvedArchive,
 			VMID:        vmid,
