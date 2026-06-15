@@ -70,10 +70,6 @@ func Create(ctx context.Context, bins Binaries, params CreateParams, stepFn func
 	if compress == "" {
 		compress = "zstd"
 	}
-	notesTemplate := strings.TrimSpace(params.NotesTemplate)
-	if notesTemplate == "" {
-		notesTemplate = "{{guestname}} {{now}}"
-	}
 
 	exists, err := VMExists(ctx, bins.QM, params.VMID)
 	if err != nil {
@@ -88,12 +84,14 @@ func Create(ctx context.Context, bins Binaries, params CreateParams, stepFn func
 		mu          sync.Mutex
 		archivePath string
 	)
+	// NOTE: --notes-template is deliberately omitted. vzdump rejects it unless
+	// --storage is also given ("storage: missing property required by
+	// 'notes-template'"), and this path dumps to an explicit --dumpdir.
 	args := []string{
 		strconv.Itoa(params.VMID),
 		"--dumpdir", params.DumpDir,
 		"--mode", mode,
 		"--compress", compress,
-		"--notes-template", notesTemplate,
 	}
 
 	err = runStream(ctx, bins.VZDump, args,

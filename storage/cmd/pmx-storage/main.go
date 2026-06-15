@@ -427,6 +427,10 @@ func intParam(params map[string]any, key string, fallback int) int {
 		return t
 	case int64:
 		return int(t)
+	case uint64:
+		// CBOR decodes non-negative integers as uint64; without this case
+		// numeric params silently fall back to 0.
+		return int(t)
 	case float64:
 		return int(t)
 	}

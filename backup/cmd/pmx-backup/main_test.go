@@ -49,3 +49,16 @@ func TestNormalizeSyncPullParamsAllowsMissingPathInsideRoot(t *testing.T) {
 		t.Fatalf("expected normalized local paths to be set, got top=%q s3=%q", params.LocalPath, params.S3.LocalPath)
 	}
 }
+
+func TestIntParamHandlesUint64FromCBOR(t *testing.T) {
+	// CBOR decodes a non-negative vmid into uint64. requiredIntParam must accept
+	// it; the missing uint64 case caused "vmid must be a positive integer".
+	params := map[string]any{"vmid": uint64(955)}
+	got, err := requiredIntParam(params, "vmid")
+	if err != nil {
+		t.Fatalf("requiredIntParam returned error for uint64 vmid: %v", err)
+	}
+	if got != 955 {
+		t.Fatalf("requiredIntParam(uint64 955) = %d, want 955", got)
+	}
+}

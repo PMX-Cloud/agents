@@ -511,6 +511,10 @@ func intParam(params map[string]any, key string, fallback int) int {
 		return typed
 	case int64:
 		return int(typed)
+	case uint64:
+		// CBOR decodes non-negative integers (e.g. a vmid) as uint64; without
+		// this case numeric params silently fall back to 0.
+		return int(typed)
 	case float64:
 		return int(typed)
 	case string:
