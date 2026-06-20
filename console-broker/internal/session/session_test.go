@@ -36,6 +36,25 @@ func TestFromEnvelope_Valid(t *testing.T) {
 	}
 }
 
+func TestFromEnvelope_AcceptsCBORUint64VMID(t *testing.T) {
+	t.Parallel()
+
+	// The backend sends vmId as a number; cbor.encodeCanonical encodes a positive
+	// integer as a CBOR unsigned int, which the envelope decoder yields as uint64
+	// (not the native int used by hand-built test envelopes). The broker must
+	// accept that, otherwise vmId defaults to 0 → "vmId must be a positive integer".
+	env := validEnvelope()
+	env.Params["vmId"] = uint64(101)
+
+	req, err := session.FromEnvelope(env, 100, []string{".pmxcloud.example"})
+	if err != nil {
+		t.Fatalf("FromEnvelope() with uint64 vmId error = %v", err)
+	}
+	if req.VMID != 101 {
+		t.Fatalf("vmid = %d, want 101", req.VMID)
+	}
+}
+
 func TestFromEnvelope_RejectsUnsupportedCommand(t *testing.T) {
 	t.Parallel()
 

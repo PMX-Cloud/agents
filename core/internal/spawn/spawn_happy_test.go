@@ -13,10 +13,10 @@ import (
 	"github.com/pmx-cloud/agents/shared/envelope"
 )
 
-// standardInputFileArg returns the path of the --property=StandardInputFile=
+// standardInputFileArg returns the path of the --property=StandardInput=file:
 // arg, or "" if absent.
 func standardInputFileArg(args []string) string {
-	const prefix = "--property=StandardInputFile="
+	const prefix = "--property=StandardInput=file:"
 	for _, a := range args {
 		if strings.HasPrefix(a, prefix) {
 			return strings.TrimPrefix(a, prefix)

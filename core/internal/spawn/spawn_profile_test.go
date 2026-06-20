@@ -6,8 +6,9 @@ func TestProfileForTemplateConsoleBroker(t *testing.T) {
 	t.Parallel()
 
 	p := profileForTemplate("pmx-console-broker@.service")
-	if p.User != "pmx-console" {
-		t.Fatalf("user = %q, want pmx-console", p.User)
+	// Root is required to connect() to the root-owned qemu serial socket.
+	if p.User != "root" {
+		t.Fatalf("user = %q, want root", p.User)
 	}
 	if p.ServiceType != "simple" {
 		t.Fatalf("type = %q, want simple", p.ServiceType)

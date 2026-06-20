@@ -26,7 +26,7 @@ func TestProfileForTemplate_AllKnownTemplates(t *testing.T) {
 	}{
 		{"pmx-hardware-installer@.service", "root", "oneshot", 0},
 		{"pmx-updater@.service", "root", "oneshot", 0},
-		{"pmx-console-broker@.service", "pmx-console", "simple", 14400},
+		{"pmx-console-broker@.service", "root", "simple", 14400},
 	}
 	for _, tc := range cases {
 		p := profileForTemplate(tc.template)
@@ -146,8 +146,13 @@ func TestBuildSpawnArgs_ConsoleBroker(t *testing.T) {
 
 	joined := strings.Join(args, " ")
 
-	if !strings.Contains(joined, "--property=StandardInputFile=/run/pmx-cloud/test.env") {
-		t.Errorf("envelope must be passed via StandardInputFile, got: %v", args)
+	if !strings.Contains(joined, "--property=StandardInput=file:/run/pmx-cloud/test.env") {
+		t.Errorf("envelope must be passed via StandardInput=file:, got: %v", args)
+	}
+	// Must use the canonical directive, not the StandardInputFile= sugar that
+	// systemd-run --property rejects ("Unknown assignment").
+	if strings.Contains(joined, "StandardInputFile=") {
+		t.Errorf("must not use the StandardInputFile= sugar (rejected by systemd-run), got: %v", args)
 	}
 	if strings.Contains(joined, "StandardInput=fd:") || strings.Contains(joined, "StandardInputData=") {
 		t.Errorf("must not leak the envelope via fd: or StandardInputData argv, got: %v", args)

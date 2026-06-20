@@ -10,16 +10,19 @@ Any secret passed there is visible to all processes on the host. Delivering the
 envelope on stdin keeps the child's cmdline/environ clean.
 
 The envelope is staged in a 0600 root:root tmpfs file and passed via
-`--property=StandardInputFile=<path>`: systemd (PID1, root) opens the file as the
+`--property=StandardInput=file:<path>`: systemd (PID1, root) opens the file as the
 unit's stdin before dropping to the unit's User=, and the child reads it from
 stdin. Only the non-sensitive PATH appears in systemd-run's argv — the envelope
 bytes are never in any process's cmdline or environ. The file is unlinked shortly
 after the unit starts (the open fd survives the unlink).
 
-(The previous `StandardInput=fd:3` + sealed-memfd form never worked: `fd:NAME`
-references a *named* descriptor, not a numeric one, so the transient unit failed
-before exec and was garbage-collected. `StandardInputData=<base64>` would have
-worked but leaked the envelope into systemd-run's argv.)
+(It MUST be the canonical `StandardInput=file:PATH` directive — the
+`StandardInputFile=PATH` sugar is rejected by `systemd-run --property` with
+"Unknown assignment", so the transient unit is never created and the child never
+execs. The previous `StandardInput=fd:3` + sealed-memfd form never worked either:
+`fd:NAME` references a *named* descriptor, not a numeric one, so the transient
+unit failed before exec and was garbage-collected. `StandardInputData=<base64>`
+works but leaks the envelope into systemd-run's argv.)
 */
 package spawn
 
@@ -115,8 +118,15 @@ var defaultTemplateProfiles = map[string]templateProfile{
 		RemainAfterExit: false,
 	},
 	"pmx-console-broker@.service": {
-		User:            "pmx-console",
-		Group:           "pmx-console",
+		// Runs as root because Proxmox creates the VM serial socket
+		// (/var/run/qemu-server/<vmid>.serial0) as root:root srwxr-x---, and a
+		// unix connect() needs write access to the socket inode. The socket is
+		// recreated root-owned on every VM boot, so a persistent non-root ACL
+		// isn't viable. The broker is still ephemeral, AppArmor-confined, and
+		// only runs after verifying a signed console.open envelope — matching
+		// how pmx-hardware-installer/pmx-updater already run as root.
+		User:            "root",
+		Group:           "root",
 		ServiceType:     "simple",
 		RemainAfterExit: false,
 		Restart:         "no",

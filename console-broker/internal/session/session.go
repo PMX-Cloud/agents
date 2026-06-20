@@ -166,7 +166,28 @@ func intParam(params map[string]any, key string, fallback int) int {
 		return typed
 	case int64:
 		return int(typed)
+	// CBOR canonical encoding emits positive integers as unsigned ints, which the
+	// envelope decoder yields as uint64 — handle the full set of integer kinds so
+	// a numeric param (e.g. vmId) is never silently dropped to the fallback.
+	case uint64:
+		return int(typed)
+	case uint:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case uint32:
+		return int(typed)
+	case int16:
+		return int(typed)
+	case uint16:
+		return int(typed)
+	case int8:
+		return int(typed)
+	case uint8:
+		return int(typed)
 	case float64:
+		return int(typed)
+	case float32:
 		return int(typed)
 	case string:
 		trimmed := strings.TrimSpace(typed)

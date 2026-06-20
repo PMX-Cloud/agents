@@ -12,20 +12,25 @@ import "fmt"
 // without root or systemd.
 //
 // The signed envelope is delivered to the child's stdin via
-// `--property=StandardInputFile=<path>`: systemd (PID1, root) opens the file as
+// `--property=StandardInput=file:<path>`: systemd (PID1, root) opens the file as
 // the unit's standard input before dropping to the unit's User=. Only the
 // non-sensitive PATH appears in argv — the envelope bytes live in a 0600
 // root:root tmpfs file, never in any process's /proc/<pid>/cmdline or environ.
-// (The earlier `StandardInput=fd:3` form never worked — `fd:NAME` references a
-// *named* descriptor, not a numeric one — and `StandardInputData=<base64>`
-// would have leaked the envelope into systemd-run's argv.)
+//
+// NOTE: it MUST be the canonical `StandardInput=file:PATH` directive form, not
+// the `StandardInputFile=PATH` sugar. `systemd-run --property` rejects the latter
+// with "Unknown assignment: StandardInputFile=…" (verified on systemd 257), so the
+// transient unit is never created and the ephemeral agent never execs.
+// (The earlier `StandardInput=fd:3` form never worked either — `fd:NAME`
+// references a *named* descriptor, not a numeric one — and `StandardInputData=`
+// would have leaked the base64 envelope into systemd-run's argv.)
 func buildSpawnArgs(req EphemeralRequest, profile templateProfile, envFilePath string) []string {
 	unitName := InstantiateTemplate(req.Template, req.JobID)
 
 	args := []string{
 		"systemd-run",
 		"--unit=" + unitName,
-		"--property=StandardInputFile=" + envFilePath,
+		"--property=StandardInput=file:" + envFilePath,
 		fmt.Sprintf("--property=Type=%s", profile.ServiceType),
 		fmt.Sprintf("--property=User=%s", profile.User),
 		fmt.Sprintf("--property=Group=%s", profile.Group),
