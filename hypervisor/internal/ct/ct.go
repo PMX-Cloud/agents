@@ -99,6 +99,13 @@ func Delete(ctx context.Context, px proxmox.ExecIface, params map[string]any) er
 	if err != nil {
 		return err
 	}
+	// Idempotency: if the CT no longer exists on this host, deletion is a no-op.
+	// Mirrors the ct.create existence probe. This lets the backend reconcile ghost
+	// records whose host CT is already gone (e.g. after a failed create) instead of
+	// leaving them wedged in "deleting" forever.
+	if result, _ := px.Pct(ctx, "config", ctid); result == nil || result.ExitCode != 0 {
+		return nil
+	}
 	// Refuse if running.
 	status, err := ctStatus(ctx, px, ctid)
 	if err != nil {

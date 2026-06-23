@@ -96,6 +96,16 @@ func TestDelete_Stopped(t *testing.T) {
 	}
 }
 
+// A CT whose host config is already gone (pct config exits non-zero) must delete
+// idempotently so the backend can reconcile ghost "deleting" records.
+func TestDelete_MissingCT_Idempotent(t *testing.T) {
+	m := &proxmox.MockExec{Result: &proxmox.ExecResult{ExitCode: 1, Stderr: []byte("Configuration file ... does not exist")}}
+	err := ct.Delete(context.Background(), m, map[string]any{"ctid": "951"})
+	if err != nil {
+		t.Fatalf("expected idempotent success for missing CT, got: %v", err)
+	}
+}
+
 // ── ct.start / stop / reboot ─────────────────────────────────────────────────
 
 func TestStop_Valid(t *testing.T) {
