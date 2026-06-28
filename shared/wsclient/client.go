@@ -132,7 +132,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.BackendURL == "" {
 		return nil, fmt.Errorf("wsclient: BackendURL is required")
 	}
-	if !cfg.AllowInsecureWS && (len(cfg.BackendURL) < 5 || (strings.HasPrefix(cfg.BackendURL, "wss://") == false && strings.HasPrefix(cfg.BackendURL, "ws://") == false)) {
+	if !cfg.AllowInsecureWS && (len(cfg.BackendURL) < 5 || (!strings.HasPrefix(cfg.BackendURL, "wss://") && !strings.HasPrefix(cfg.BackendURL, "ws://"))) {
 		return nil, fmt.Errorf("wsclient: BackendURL must start with wss:// or ws://")
 	}
 	if cfg.AgentClass == "" {
