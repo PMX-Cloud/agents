@@ -1,0 +1,21 @@
+[backend]
+url = "wss://api.pmxcloud.example/ws/agent/security"
+ca_cert = "/etc/pmx-cloud/backend-ca.crt"
+
+[identity]
+cert = "/etc/pmx-cloud/pmx-security/client.crt"
+key = "/etc/pmx-cloud/pmx-security/client.key"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[cve]
+db_path = "/var/lib/pmx-cloud/security/cve.db"
+signature_keyset_path = "/etc/pmx-cloud/release-keyset.pub"
+
+[lynis]
+binary = "/usr/sbin/lynis"
+profile = "/etc/lynis/default.prf"
+
+[state]
+dir = "/var/lib/pmx-cloud/security"

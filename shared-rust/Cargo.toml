@@ -1,0 +1,57 @@
+[package]
+name = "pmx-agents-shared"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+description = "PMX-Cloud shared agent library (envelope, replay, keyset, wsclient)"
+license = "MIT"
+
+[lib]
+name = "pmx_shared"
+path = "src/lib.rs"
+
+[dependencies]
+# CBOR encoding (canonical, sorted keys)
+ciborium = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+
+# Ed25519 signatures
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+
+# Hex encoding/decoding
+hex = "0.4"
+
+# SHA-256 (audit log hash chain)
+sha2 = "0.10"
+
+# WebSocket (async, TLS)
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = { version = "0.21", features = ["rustls-tls-native-roots"] }
+# rustls (pure-Rust TLS) for the agent↔backend mTLS — no OpenSSL, so the fleet
+# cross-compiles cleanly to arm64. Versions track tokio-tungstenite 0.21's
+# rustls 0.22 / tokio-rustls 0.25 so Connector::Rustls(Arc<ClientConfig>) lines up.
+rustls = "0.22"
+rustls-pemfile = "2"
+rustls-native-certs = "0.7"
+futures-util = "0.3"
+async-trait = "0.1"
+serde_json = "1"
+
+# Ordered map for replay cache
+indexmap = "2"
+
+# RwLock with better performance than std
+parking_lot = "0.12"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+tracing = "0.1"
+thiserror = "1"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3"
