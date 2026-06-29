@@ -1,0 +1,43 @@
+processor	: 0
+vendor_id	: GenuineIntel
+cpu family	: 6
+model		: 142
+model name	: Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz
+stepping	: 10
+microcode	: 0xf0
+cpu MHz		: 2000.000
+cache size	: 8192 KB
+physical id	: 0
+siblings	: 8
+core id		: 0
+cpu cores	: 4
+flags		: fpu vme de pse tsc msr pae mce cx8 apic vmx
+bogomips	: 4001.60
+
+processor	: 1
+vendor_id	: GenuineIntel
+cpu family	: 6
+model		: 142
+model name	: Intel(R) Core(TM) i7-8550U CPU @ 1.80GHz
+stepping	: 10
+microcode	: 0xf0
+cpu MHz		: 2001.000
+cache size	: 8192 KB
+physical id	: 0
+siblings	: 8
+core id		: 1
+cpu cores	: 4
+flags		: fpu vme de pse tsc msr pae mce cx8 apic vmx
+bogomips	: 4001.60
+
+processor	: 2
+vendor_id	: GenuineIntel
+cpu family	: 6
+core id		: 2
+flags		: fpu vme
+
+processor	: 3
+vendor_id	: GenuineIntel
+cpu family	: 6
+core id		: 3
+flags		: fpu vme

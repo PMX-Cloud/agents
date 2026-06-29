@@ -1,0 +1,8 @@
+[identity]
+host_fingerprint_file = "/etc/pmx-cloud/host-fingerprint"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[files]
+maintenance_window_cache_path = "/var/lib/pmx-cloud/updater/window.json"

@@ -1,0 +1,37 @@
+# pmx-core development configuration
+# Copy to /etc/pmx-cloud/pmx-core.conf on the target host.
+
+[backend]
+url = "wss://localhost:8443/ws/agent/core"
+ca_cert = "/etc/pmx-cloud/backend-ca.crt"
+# auth_token = "pmxagent_xxx"
+
+[identity]
+cert = "/etc/pmx-cloud/pmx-core/client.crt"
+key  = "/etc/pmx-cloud/pmx-core/client.key"
+host_fingerprint_file = "/etc/pmx-cloud/host-fingerprint"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[state]
+dir = "/var/lib/pmx-cloud/core"
+
+[siblings]
+allowed = [
+  "pmx-telemetry.service",
+  "pmx-hypervisor.service",
+  "pmx-storage.service",
+  "pmx-network.service",
+  "pmx-security.service",
+  "pmx-backup.service",
+]
+ephemeral_templates = [
+  "pmx-hardware-installer@.service",
+  "pmx-updater@.service",
+  "pmx-console-broker@.service",
+]
+
+[heartbeat]
+interval_seconds = 15
+timeout_seconds  = 45

@@ -1,0 +1,21 @@
+# pmx-telemetry configuration example
+# The installer writes the production copy to /etc/pmx-cloud/pmx-telemetry.conf
+# overriding: backend.url, identity paths, cert/key paths.
+
+[backend]
+url     = "wss://api.pmxcloud.cloud/ws/agent/telemetry"
+ca_cert = "/etc/pmx-cloud/backend-ca.crt"
+
+[identity]
+cert = "/etc/pmx-cloud/agents/pmx-telemetry/client.crt"
+key  = "/etc/pmx-cloud/agents/pmx-telemetry/client.key"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[collection]
+metrics_interval_seconds = 15
+events_buffer_seconds    = 60
+
+[features]
+proxmox_status = true

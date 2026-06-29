@@ -1,0 +1,31 @@
+[backend]
+url = "wss://api.pmxcloud.example/ws/agent/network"
+# auth_token = "pmxagent_xxx"
+
+[identity]
+cert = "/etc/pmx-cloud/pmx-network/client.crt"
+key = "/etc/pmx-cloud/pmx-network/client.key"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[wireguard]
+key_file = "/var/lib/pmx-cloud/network/wg.key"
+listen_port_range = [51820, 51830]
+max_peers_per_host = 256
+interface = "pmxwg0"
+
+[nftables]
+ruleset_dir = "/etc/nftables.d/pmx"
+max_rules_per_host = 10000
+
+# SAFETY: default_drop_input=false is the safe default — it prevents SSH
+# lockout on enrollment. Set to true only after confirming SSH access is
+# maintained via allow_ssh_from or an out-of-band path.
+# allow_ssh_from covers RFC-1918 private ranges as a belt-and-suspenders guard.
+[isolation]
+default_drop_input = false
+allow_ssh_from = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+
+[state]
+dir = "/var/lib/pmx-cloud/network"
