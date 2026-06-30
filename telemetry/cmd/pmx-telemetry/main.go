@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -69,7 +70,11 @@ func main() {
 		os.Exit(preflight.Run(checks))
 	}
 
-	if err := run(cfg, log); err != nil {
+	// A canceled context is graceful shutdown (SIGTERM/SIGINT), not a failure:
+	// run() returns wsclient.Run(sigCtx) which yields context.Canceled on signal.
+	// Exiting non-zero there makes systemd mark the unit `failed` on every stop
+	// (needing a manual reset-failed); exit 0 so a stop is a clean `inactive`.
+	if err := run(cfg, log); err != nil && !errors.Is(err, context.Canceled) {
 		log.Error("pmx-telemetry exited with error", "err", err)
 		os.Exit(1)
 	}
