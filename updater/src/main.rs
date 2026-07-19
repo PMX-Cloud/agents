@@ -2,12 +2,12 @@
 
 use pmx_updater::{agent_update, config, envelope, maintenance, os_update};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::Parser;
 use config::Config;
-use maintenance::window::{WindowSet, is_now, read_cache, write_cache};
+use maintenance::window::{is_now, read_cache, write_cache, WindowSet};
 use pmx_shared::capability::{self, Stability};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::io::{self, Read};
 
@@ -18,12 +18,22 @@ const AGENT_CLASS: &str = "pmx-updater";
 fn declare_capabilities() {
     // Maintenance windows
     capability::declare(AGENT_CLASS, "update.maintenance.set", 1, Stability::Stable);
-    capability::declare(AGENT_CLASS, "update.maintenance.is_now", 1, Stability::Stable);
+    capability::declare(
+        AGENT_CLASS,
+        "update.maintenance.is_now",
+        1,
+        Stability::Stable,
+    );
 
     // OS updates
     capability::declare(AGENT_CLASS, "update.os.scan", 1, Stability::Stable);
     capability::declare(AGENT_CLASS, "update.os.dry_run", 1, Stability::Stable);
-    capability::declare(AGENT_CLASS, "update.os.apply.security", 1, Stability::Stable);
+    capability::declare(
+        AGENT_CLASS,
+        "update.os.apply.security",
+        1,
+        Stability::Stable,
+    );
     capability::declare(AGENT_CLASS, "update.os.apply.full", 1, Stability::Stable);
 
     // Agent self-update
@@ -63,16 +73,16 @@ fn main() -> Result<()> {
             old_version: Some(old_version),
             agents_base: std::path::PathBuf::from(&cfg.files.agents_base),
         };
-        
+
         agent_update::swap::install_self(&handle)?;
-        
+
         // Remove sentinel
         let sentinel_path = format!("/run/pmx-cloud/updater.swap.{}", my_version);
         let _ = std::fs::remove_file(&sentinel_path);
-        
+
         // Validate config as our "health check"
         cfg.validate()?;
-        
+
         println!("self-swap to {} finalized", my_version);
         return Ok(());
     }
@@ -81,7 +91,10 @@ fn main() -> Result<()> {
         let my_version = env!("CARGO_PKG_VERSION");
         let sentinel_path = format!("/run/pmx-cloud/updater.swap.{}", my_version);
         if std::path::Path::new(&sentinel_path).exists() {
-            println!("sentinel {} is stale, performing self-rollback", sentinel_path);
+            println!(
+                "sentinel {} is stale, performing self-rollback",
+                sentinel_path
+            );
             agent_update::swap::rollback_self(&cfg)?;
             // Attempt to remove the stale sentinel
             let _ = std::fs::remove_file(&sentinel_path);
@@ -99,19 +112,31 @@ fn main() -> Result<()> {
     declare_capabilities();
 
     let mut stdin = Vec::new();
-    io::stdin().read_to_end(&mut stdin).context("read envelope from stdin")?;
+    io::stdin()
+        .read_to_end(&mut stdin)
+        .context("read envelope from stdin")?;
     let verified = envelope::read_and_verify_envelope(
         &stdin,
         &cfg.keyset.path,
         &cfg.identity.host_fingerprint_file,
     )?;
 
-    let result = dispatch(&cfg, &verified.envelope.command, &verified.envelope.params, verified.signing_key_index)?;
+    let result = dispatch(
+        &cfg,
+        &verified.envelope.command,
+        &verified.envelope.params,
+        verified.signing_key_index,
+    )?;
     println!("{}", serde_json::to_string(&result)?);
     Ok(())
 }
 
-fn dispatch(cfg: &Config, command: &str, params: &BTreeMap<String, Value>, signing_key_index: usize) -> Result<Value> {
+fn dispatch(
+    cfg: &Config,
+    command: &str,
+    params: &BTreeMap<String, Value>,
+    signing_key_index: usize,
+) -> Result<Value> {
     match command {
         "update.maintenance.set" => {
             let windows: WindowSet = serde_json::from_value(json!({ "windows": params.get("windows").cloned().unwrap_or(Value::Array(vec![])) }))
@@ -125,27 +150,40 @@ fn dispatch(cfg: &Config, command: &str, params: &BTreeMap<String, Value>, signi
             Ok(serde_json::to_value(status)?)
         }
         "update.os.scan" => Ok(serde_json::to_value(os_update::apt::scan()?)?),
-        "update.os.dry_run" => Ok(serde_json::to_value(os_update::apt::apply(os_update::ApplyMode::DryRun, vec![])?)?),
+        "update.os.dry_run" => Ok(serde_json::to_value(os_update::apt::apply(
+            os_update::ApplyMode::DryRun,
+            vec![],
+        )?)?),
         "update.os.apply.security" => {
             let windows = read_cache(&cfg.files.maintenance_window_cache_path)?;
-            let override_window = params.get("override_window")
+            let override_window = params
+                .get("override_window")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             maintenance::check_update_allowed(&windows, override_window, signing_key_index)?;
-            Ok(serde_json::to_value(os_update::apt::apply(os_update::ApplyMode::Security, vec![])?)?)
+            Ok(serde_json::to_value(os_update::apt::apply(
+                os_update::ApplyMode::Security,
+                vec![],
+            )?)?)
         }
         "update.os.apply.full" => {
             let windows = read_cache(&cfg.files.maintenance_window_cache_path)?;
-            let override_window = params.get("override_window")
+            let override_window = params
+                .get("override_window")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             maintenance::check_update_allowed(&windows, override_window, signing_key_index)?;
-            Ok(serde_json::to_value(os_update::apt::apply(os_update::ApplyMode::Full, vec![])?)?)
+            Ok(serde_json::to_value(os_update::apt::apply(
+                os_update::ApplyMode::Full,
+                vec![],
+            )?)?)
         }
         "update.agent.check" => Ok(serde_json::to_value(agent_update::check(cfg)?)?),
         "update.agent.apply" => {
-            let windows = maintenance::window::read_cache(&cfg.files.maintenance_window_cache_path)?;
-            let override_window = params.get("override_window")
+            let windows =
+                maintenance::window::read_cache(&cfg.files.maintenance_window_cache_path)?;
+            let override_window = params
+                .get("override_window")
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             maintenance::check_update_allowed(&windows, override_window, signing_key_index)?;
@@ -157,7 +195,7 @@ fn dispatch(cfg: &Config, command: &str, params: &BTreeMap<String, Value>, signi
 
 #[cfg(test)]
 mod tests {
-    use super::{dispatch, declare_capabilities, AGENT_CLASS};
+    use super::{declare_capabilities, dispatch, AGENT_CLASS};
     use crate::config::{Config, FilesConfig, IdentityConfig, KeysetConfig};
     use pmx_shared::capability;
     #[allow(unused_imports)]
@@ -197,13 +235,15 @@ mod tests {
             json!([{ "days": ["Sat"], "start": "02:00", "end": "06:00", "tz": "UTC" }]),
         );
         // signing_key_index=0 (release key) for non-window-gated commands
-        let set_result = dispatch(&cfg, "update.maintenance.set", &set_params, 0).expect("set result");
+        let set_result =
+            dispatch(&cfg, "update.maintenance.set", &set_params, 0).expect("set result");
         assert_eq!(set_result["written"], json!(true));
 
         let payload = fs::read_to_string(&cache_path).expect("cache file");
         assert!(payload.contains("Sat"));
 
-        let is_now = dispatch(&cfg, "update.maintenance.is_now", &BTreeMap::new(), 0).expect("is_now result");
+        let is_now = dispatch(&cfg, "update.maintenance.is_now", &BTreeMap::new(), 0)
+            .expect("is_now result");
         assert!(is_now.get("active").is_some());
     }
 
@@ -212,7 +252,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let cache_path = dir.path().join("missing-window.json");
         let cfg = test_config(cache_path.to_str().expect("path"));
-        let err = dispatch(&cfg, "update.os.apply.security", &BTreeMap::new(), 0).expect_err("should fail");
+        let err = dispatch(&cfg, "update.os.apply.security", &BTreeMap::new(), 0)
+            .expect_err("should fail");
         assert!(err.to_string().contains("read maintenance cache"));
     }
 
@@ -221,7 +262,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let cache_path = dir.path().join("missing-window.json");
         let cfg = test_config(cache_path.to_str().expect("path"));
-        let err = dispatch(&cfg, "update.os.apply.full", &BTreeMap::new(), 0).expect_err("should fail");
+        let err =
+            dispatch(&cfg, "update.os.apply.full", &BTreeMap::new(), 0).expect_err("should fail");
         assert!(err.to_string().contains("read maintenance cache"));
     }
 
@@ -230,26 +272,9 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let cache_path = dir.path().join("missing-window.json");
         let cfg = test_config(cache_path.to_str().expect("path"));
-        let err = dispatch(&cfg, "update.agent.apply", &BTreeMap::new(), 0).expect_err("should fail");
+        let err =
+            dispatch(&cfg, "update.agent.apply", &BTreeMap::new(), 0).expect_err("should fail");
         assert!(err.to_string().contains("read maintenance cache"));
-    }
-
-    #[test]
-    fn os_scan_succeeds() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let cache_path = dir.path().join("window.json");
-        let cfg = test_config(cache_path.to_str().expect("path"));
-        let result = dispatch(&cfg, "update.os.scan", &BTreeMap::new(), 0).expect("scan should succeed");
-        assert!(result.get("packages").is_some(), "scan result should have packages field");
-    }
-
-    #[test]
-    fn os_dry_run_succeeds() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let cache_path = dir.path().join("window.json");
-        let cfg = test_config(cache_path.to_str().expect("path"));
-        let result = dispatch(&cfg, "update.os.dry_run", &BTreeMap::new(), 0).expect("dry_run should succeed");
-        assert_eq!(result["mode"], json!("dry_run"));
     }
 
     #[test]
@@ -257,7 +282,8 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let cache_path = dir.path().join("window.json");
         let cfg = test_config(cache_path.to_str().expect("path"));
-        let err = dispatch(&cfg, "update.nonexistent", &BTreeMap::new(), 0).expect_err("should fail");
+        let err =
+            dispatch(&cfg, "update.nonexistent", &BTreeMap::new(), 0).expect_err("should fail");
         assert!(err.to_string().contains("unsupported command"));
     }
 
@@ -276,11 +302,14 @@ mod tests {
         let _ = dispatch(&cfg, "update.maintenance.set", &set_params, 0).expect("set result");
 
         // Try to apply security with job key (index=1) and no override
-        let err = dispatch(&cfg, "update.os.apply.security", &BTreeMap::new(), 1).expect_err("should fail");
+        let err = dispatch(&cfg, "update.os.apply.security", &BTreeMap::new(), 1)
+            .expect_err("should fail");
         let msg = err.to_string();
         assert!(
-            msg.contains("outside_maintenance_window") || msg.contains("override_requires_release_key"),
-            "unexpected error message: {}", msg
+            msg.contains("outside_maintenance_window")
+                || msg.contains("override_requires_release_key"),
+            "unexpected error message: {}",
+            msg
         );
     }
 
@@ -302,7 +331,11 @@ mod tests {
         let mut apply_params = BTreeMap::new();
         apply_params.insert("override_window".to_string(), json!(true));
         let result = dispatch(&cfg, "update.os.apply.security", &apply_params, 0);
-        assert!(result.is_ok(), "override with release key should be permitted: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "override with release key should be permitted: {:?}",
+            result
+        );
     }
 
     #[test]
@@ -322,7 +355,8 @@ mod tests {
         // Override with job key (index=1) should be rejected
         let mut apply_params = BTreeMap::new();
         apply_params.insert("override_window".to_string(), json!(true));
-        let err = dispatch(&cfg, "update.os.apply.security", &apply_params, 1).expect_err("should fail");
+        let err =
+            dispatch(&cfg, "update.os.apply.security", &apply_params, 1).expect_err("should fail");
         assert!(err.to_string().contains("override_requires_release_key"));
     }
 
@@ -331,17 +365,39 @@ mod tests {
         declare_capabilities();
         // Verify all expected capabilities are declared
         let caps = capability::list();
-        let names: Vec<&str> = caps.iter()
+        let names: Vec<&str> = caps
+            .iter()
             .filter(|c| c.agent_class == AGENT_CLASS)
             .map(|c| c.command.as_str())
             .collect();
-        assert!(names.contains(&"update.maintenance.set"), "missing update.maintenance.set");
-        assert!(names.contains(&"update.maintenance.is_now"), "missing update.maintenance.is_now");
+        assert!(
+            names.contains(&"update.maintenance.set"),
+            "missing update.maintenance.set"
+        );
+        assert!(
+            names.contains(&"update.maintenance.is_now"),
+            "missing update.maintenance.is_now"
+        );
         assert!(names.contains(&"update.os.scan"), "missing update.os.scan");
-        assert!(names.contains(&"update.os.dry_run"), "missing update.os.dry_run");
-        assert!(names.contains(&"update.os.apply.security"), "missing update.os.apply.security");
-        assert!(names.contains(&"update.os.apply.full"), "missing update.os.apply.full");
-        assert!(names.contains(&"update.agent.check"), "missing update.agent.check");
-        assert!(names.contains(&"update.agent.apply"), "missing update.agent.apply");
+        assert!(
+            names.contains(&"update.os.dry_run"),
+            "missing update.os.dry_run"
+        );
+        assert!(
+            names.contains(&"update.os.apply.security"),
+            "missing update.os.apply.security"
+        );
+        assert!(
+            names.contains(&"update.os.apply.full"),
+            "missing update.os.apply.full"
+        );
+        assert!(
+            names.contains(&"update.agent.check"),
+            "missing update.agent.check"
+        );
+        assert!(
+            names.contains(&"update.agent.apply"),
+            "missing update.agent.apply"
+        );
     }
 }

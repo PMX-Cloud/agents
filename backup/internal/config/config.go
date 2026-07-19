@@ -42,6 +42,7 @@ type VZDumpConfig struct {
 	Binary          string `toml:"binary"`
 	QMBinary        string `toml:"qm_binary"`
 	QMRestoreBinary string `toml:"qmrestore_binary"`
+	PCTBinary       string `toml:"pct_binary"`
 	TarBinary       string `toml:"tar_binary"`
 	PBSBinary       string `toml:"pbs_binary"`
 }
@@ -121,6 +122,9 @@ func (c *Config) validate() error {
 	}
 	if c.VZDump.QMRestoreBinary == "" {
 		c.VZDump.QMRestoreBinary = "/usr/sbin/qmrestore"
+	}
+	if c.VZDump.PCTBinary == "" {
+		c.VZDump.PCTBinary = "/usr/sbin/pct"
 	}
 	if c.VZDump.TarBinary == "" {
 		c.VZDump.TarBinary = "/usr/bin/tar"

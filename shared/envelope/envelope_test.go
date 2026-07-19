@@ -57,6 +57,32 @@ func makeCache() *envelope.ReplayCache {
 	return envelope.NewReplayCache(1000, 24*time.Hour)
 }
 
+func deterministicInteropEnvelope(t *testing.T) (ed25519.PublicKey, *envelope.Envelope) {
+	t.Helper()
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	priv := ed25519.NewKeyFromSeed(seed)
+	pub := priv.Public().(ed25519.PublicKey)
+	now := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	e := &envelope.Envelope{
+		Version:   "pmx-agent-v1",
+		JobID:     "01900000-0000-7000-8000-000000000001",
+		IssuedAt:  now,
+		ExpiresAt: now.Add(30 * time.Minute),
+		Issuer:    "backend-dev-1",
+		Audience:  "pmx-network",
+		Host:      "aabbccdd",
+		Command:   "network.tunnel.up",
+		Params:    map[string]interface{}{"iface": "wg0"},
+	}
+	if err := e.Sign(priv); err != nil {
+		t.Fatalf("sign deterministic interop envelope: %v", err)
+	}
+	return pub, e
+}
+
 // TestVerify_HappyPath --------------------------------------------------
 
 func TestVerify_HappyPath(t *testing.T) {
@@ -218,8 +244,7 @@ func TestVerify_Replay(t *testing.T) {
 // Writes a signed CBOR envelope to testdata/envelope-v1.cbor for use by the
 // Rust cross-language interop test. Also writes the public key in hex.
 func TestInterop_GoSignedDumpFile(t *testing.T) {
-	pub, priv := newKeypair(t)
-	e := goodEnvelope(pub, priv)
+	pub, e := deterministicInteropEnvelope(t)
 
 	raw, err := e.Marshal()
 	if err != nil {

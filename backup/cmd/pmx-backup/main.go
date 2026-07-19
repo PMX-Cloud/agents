@@ -227,6 +227,7 @@ func (h *backupHandler) dispatch(ctx context.Context, env *envpkg.Envelope) ([]b
 			VZDump:    vzdump.ResolveBinary(h.cfg.VZDump.Binary),
 			QM:        vzdump.ResolveBinary(h.cfg.VZDump.QMBinary),
 			QMRestore: vzdump.ResolveBinary(h.cfg.VZDump.QMRestoreBinary),
+			PCT:       vzdump.ResolveBinary(h.cfg.VZDump.PCTBinary),
 		}, vzdump.CreateParams{
 			VMID:          vmid,
 			DumpDir:       dumpDir,
@@ -262,11 +263,14 @@ func (h *backupHandler) dispatch(ctx context.Context, env *envpkg.Envelope) ([]b
 			VZDump:    vzdump.ResolveBinary(h.cfg.VZDump.Binary),
 			QM:        vzdump.ResolveBinary(h.cfg.VZDump.QMBinary),
 			QMRestore: vzdump.ResolveBinary(h.cfg.VZDump.QMRestoreBinary),
+			PCT:       vzdump.ResolveBinary(h.cfg.VZDump.PCTBinary),
 		}, vzdump.RestoreParams{
-			ArchivePath: resolvedArchive,
-			VMID:        vmid,
-			Storage:     stringParam(params, "storage", ""),
-			Overwrite:   boolParam(params, "overwrite"),
+			ArchivePath:  resolvedArchive,
+			VMID:         vmid,
+			Storage:      stringParam(params, "storage", ""),
+			Overwrite:    boolParam(params, "overwrite"),
+			ResourceType: stringParam(params, "resource_type", ""),
+			Unique:       boolParam(params, "unique"),
 		}, h.stepEmitter(env))
 		if err != nil {
 			return errJSON(err), err

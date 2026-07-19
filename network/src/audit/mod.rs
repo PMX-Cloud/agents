@@ -15,6 +15,8 @@ pub struct AuditLog {
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
     Info,
+    // Kept in the serialized audit schema for warning events emitted by future handlers.
+    #[allow(dead_code)]
     Warn,
     Error,
     Critical,

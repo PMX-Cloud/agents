@@ -99,3 +99,64 @@ func TestCreate_NoDiskParamsStaysDiskless(t *testing.T) {
 		}
 	}
 }
+
+func TestCreate_AppliesAdvancedQEMUOptions(t *testing.T) {
+	s := newCreateScript()
+	err := vm.Create(context.Background(), s, map[string]any{
+		"vmid": "992", "name": "advanced-vm", "memory": 4096, "cores": 4, "sockets": 2,
+		"disk_gb": 32, "net0": "virtio,bridge=vmbr1,firewall=1",
+		"cpu_model": "host", "machine": "q35", "bios": "ovmf",
+		"agent_enabled": true, "start_on_boot": true, "nested_virtualization": true,
+		"boot_order": "net0;scsi0;ide2",
+	}, noopStep)
+	if err != nil {
+		t.Fatalf("create advanced VM: %v", err)
+	}
+
+	var createCall, bootCall []string
+	for _, call := range s.calls {
+		if call.Binary != "qm" {
+			continue
+		}
+		if call.Args[0] == "create" {
+			createCall = call.Args
+		}
+		if call.Args[0] == "set" && strings.Contains(strings.Join(call.Args, " "), "order=net0;scsi0;ide2") {
+			bootCall = call.Args
+		}
+	}
+	joined := strings.Join(createCall, " ")
+	for _, expected := range []string{
+		"--sockets 2", "--ide2 none,media=cdrom", "--net0 virtio,bridge=vmbr1,firewall=1", "--cpu host",
+		"--machine q35", "--bios ovmf", "--agent enabled=1", "--onboot 1",
+		"--tags pmx-nested-cloud",
+	} {
+		if !strings.Contains(joined, expected) {
+			t.Errorf("expected %q in qm create args, got %q", expected, joined)
+		}
+	}
+	if bootCall == nil {
+		t.Fatalf("expected explicit boot-order update, calls: %+v", s.calls)
+	}
+}
+
+func TestCreate_RejectsUnsafeNetworkAndBootOrder(t *testing.T) {
+	for name, params := range map[string]map[string]any{
+		"network": {
+			"vmid": "993", "name": "bad-net", "net0": "virtio,bridge=vmbr0,rate=0",
+		},
+		"boot": {
+			"vmid": "994", "name": "bad-boot", "boot_order": "scsi0;scsi0",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s := newCreateScript()
+			if err := vm.Create(context.Background(), s, params, noopStep); err == nil {
+				t.Fatal("expected unsafe create parameters to be rejected")
+			}
+			if len(s.calls) != 0 {
+				t.Fatalf("no subprocess expected for unsafe parameters, got %+v", s.calls)
+			}
+		})
+	}
+}

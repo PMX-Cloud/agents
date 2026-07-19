@@ -16,6 +16,7 @@ archive_roots = ["/var/lib/vz/dump", "/mnt/backups"]
 binary = "/usr/sbin/vzdump"
 qm_binary = "/usr/sbin/qm"
 qmrestore_binary = "/usr/sbin/qmrestore"
+pct_binary = "/usr/sbin/pct"
 tar_binary = "/usr/bin/tar"
 pbs_binary = "/usr/bin/proxmox-backup-client"
 

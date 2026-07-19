@@ -35,17 +35,9 @@ type AttachResult struct {
 var pciLine = regexp.MustCompile(`(?i)^([0-9a-f]{2}:[0-9a-f]{2}\.[0-7]).*`)
 
 func Install(ctx context.Context, p Params, req InstallRequest, stepFn func(string)) (*InstallResult, error) {
-	typeName := strings.ToLower(strings.TrimSpace(req.Interface))
-	if typeName == "" {
-		typeName = "usb"
-	}
-	if typeName != "usb" && typeName != "m2" {
-		return nil, fmt.Errorf("coral: interface must be usb or m2")
-	}
-
-	packages := []string{"gasket-dkms", "libedgetpu1-std"}
-	if typeName == "m2" {
-		packages[1] = "libedgetpu1-max"
+	plan, err := resolveInstallPlan(req.Interface)
+	if err != nil {
+		return nil, err
 	}
 	env := map[string]string{"DEBIAN_FRONTEND": "noninteractive"}
 
@@ -58,7 +50,7 @@ func Install(ctx context.Context, p Params, req InstallRequest, stepFn func(stri
 		return nil, fmt.Errorf("coral: apt update failed: %w", err)
 	}
 	args := []string{"install", "-y", "--option=Dpkg::Options::=--force-confnew"}
-	args = append(args, packages...)
+	args = append(args, plan.packages...)
 	if _, err := runner.Run(ctx, runner.Command{
 		Path:        p.AptGet,
 		Args:        args,
@@ -67,18 +59,51 @@ func Install(ctx context.Context, p Params, req InstallRequest, stepFn func(stri
 	}, stepFn); err != nil {
 		return nil, fmt.Errorf("coral: apt install failed: %w", err)
 	}
-	status, err := runner.Run(ctx, runner.Command{
-		Path:        p.DKMS,
-		Args:        []string{"status", "gasket"},
-		OutputLimit: p.OutputLimit,
-	}, stepFn)
-	if err != nil {
-		return nil, fmt.Errorf("coral: dkms status failed: %w", err)
+	if plan.verifyDKMS {
+		status, err := runner.Run(ctx, runner.Command{
+			Path:        p.DKMS,
+			Args:        []string{"status", "gasket"},
+			OutputLimit: p.OutputLimit,
+		}, stepFn)
+		if err != nil {
+			return nil, fmt.Errorf("coral: dkms status failed: %w", err)
+		}
+		if !strings.Contains(strings.ToLower(status.Combined), "installed") {
+			return nil, fmt.Errorf("coral: dkms status does not show installed modules")
+		}
 	}
-	if !strings.Contains(strings.ToLower(status.Combined), "installed") {
-		return nil, fmt.Errorf("coral: dkms status does not show installed modules")
+	return &InstallResult{
+		RebootRequired: plan.rebootRequired,
+		Packages:       append([]string(nil), plan.packages...),
+	}, nil
+}
+
+type installPlan struct {
+	packages       []string
+	verifyDKMS     bool
+	rebootRequired bool
+}
+
+func resolveInstallPlan(interfaceName string) (installPlan, error) {
+	typeName := strings.ToLower(strings.TrimSpace(interfaceName))
+	if typeName == "" {
+		typeName = "usb"
 	}
-	return &InstallResult{RebootRequired: true, Packages: packages}, nil
+
+	switch typeName {
+	case "usb":
+		return installPlan{
+			packages: []string{"libedgetpu1-std"},
+		}, nil
+	case "m2":
+		return installPlan{
+			packages:       []string{"gasket-dkms", "libedgetpu1-std"},
+			verifyDKMS:     true,
+			rebootRequired: true,
+		}, nil
+	default:
+		return installPlan{}, fmt.Errorf("coral: interface must be usb or m2")
+	}
 }
 
 func Attach(ctx context.Context, p Params, stepFn func(string)) (*AttachResult, error) {

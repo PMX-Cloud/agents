@@ -636,6 +636,7 @@ mod tests {
             state: crate::config::State {
                 dir: "/tmp/pmx-network-state".to_string(),
             },
+            persistence: crate::config::Persistence::default(),
         }
     }
 

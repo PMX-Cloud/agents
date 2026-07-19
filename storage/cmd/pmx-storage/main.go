@@ -255,9 +255,10 @@ func (h *storageHandler) dispatch(ctx context.Context, env *envpkg.Envelope, ex 
 
 	case "zfs.pool.create":
 		return okOrErr(zfs.PoolCreate(ctx, ex, zfs.PoolCreateParams{
-			Name:     stringParam(params, "name", ""),
-			Topology: stringParam(params, "topology", ""),
-			Devices:  stringSliceParam(params, "devices"),
+			Name:        stringParam(params, "name", ""),
+			Topology:    stringParam(params, "topology", ""),
+			Devices:     stringSliceParam(params, "devices"),
+			Compression: stringParam(params, "compression", ""),
 		}))
 
 	case "zfs.pool.destroy":
@@ -280,7 +281,10 @@ func (h *storageHandler) dispatch(ctx context.Context, env *envpkg.Envelope, ex 
 		}))
 
 	case "zfs.snapshot.create":
-		return okOrErr(zfs.SnapshotCreate(ctx, ex, zfs.SnapshotCreateParams{Snapshot: stringParam(params, "snapshot", "")}))
+		return okOrErr(zfs.SnapshotCreate(ctx, ex, zfs.SnapshotCreateParams{
+			Snapshot:  stringParam(params, "snapshot", ""),
+			Recursive: boolParam(params, "recursive"),
+		}))
 
 	case "zfs.snapshot.send":
 		return okOrErr(zfs.SnapshotSend(ctx, ex, zfs.SnapshotSendParams{

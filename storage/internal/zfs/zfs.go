@@ -22,19 +22,27 @@ var (
 		"raidz3": true,
 		"stripe": true,
 	}
+	allowedCompression = map[string]bool{
+		"off":  true,
+		"lz4":  true,
+		"zstd": true,
+		"gzip": true,
+	}
 	allowedProps = map[string]bool{
 		"compression": true,
 		"atime":       true,
 		"recordsize":  true,
+		"quota":       true,
 		"sync":        true,
 		"dedup":       true,
 	}
 )
 
 type PoolCreateParams struct {
-	Name     string   `json:"name"`
-	Topology string   `json:"topology"`
-	Devices  []string `json:"devices"`
+	Name        string   `json:"name"`
+	Topology    string   `json:"topology"`
+	Devices     []string `json:"devices"`
+	Compression string   `json:"compression,omitempty"`
 }
 
 type PoolDestroyParams struct {
@@ -54,7 +62,8 @@ type DatasetDestroyParams struct {
 }
 
 type SnapshotCreateParams struct {
-	Snapshot string `json:"snapshot"`
+	Snapshot  string `json:"snapshot"`
+	Recursive bool   `json:"recursive"`
 }
 
 type SnapshotSendParams struct {
@@ -297,7 +306,16 @@ func PoolCreate(ctx context.Context, ex storageexec.Interface, p PoolCreateParam
 		}
 	}
 
-	args := []string{"create", p.Name}
+	compression := strings.ToLower(strings.TrimSpace(p.Compression))
+	if compression != "" && !allowedCompression[compression] {
+		return fmt.Errorf("zfs.pool.create: compression %q is not allowed", p.Compression)
+	}
+
+	args := []string{"create"}
+	if compression != "" {
+		args = append(args, "-O", "compression="+compression)
+	}
+	args = append(args, p.Name)
 	if topology != "stripe" {
 		args = append(args, topology)
 	}
@@ -374,7 +392,12 @@ func SnapshotCreate(ctx context.Context, ex storageexec.Interface, p SnapshotCre
 	if !isSafeSnapshot(p.Snapshot) {
 		return fmt.Errorf("zfs.snapshot.create: invalid snapshot")
 	}
-	if _, err := ex.Zfs(ctx, "snapshot", p.Snapshot); err != nil {
+	args := []string{"snapshot"}
+	if p.Recursive {
+		args = append(args, "-r")
+	}
+	args = append(args, p.Snapshot)
+	if _, err := ex.Zfs(ctx, args...); err != nil {
 		return fmt.Errorf("zfs.snapshot.create: %w", err)
 	}
 	return nil

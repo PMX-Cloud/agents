@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -126,6 +127,42 @@ func TestPoolCreateRejectsUnknownTopologyBeforeExec(t *testing.T) {
 	}
 }
 
+func TestPoolCreateAppliesCompressionAndCanonicalAgentParameters(t *testing.T) {
+	m := &storageexec.MockExec{}
+	err := zfs.PoolCreate(context.Background(), m, zfs.PoolCreateParams{
+		Name:        "tank",
+		Topology:    "mirror",
+		Devices:     []string{"/dev/sdb", "/dev/sdc"},
+		Compression: "lz4",
+	})
+	if err != nil {
+		t.Fatalf("pool create: %v", err)
+	}
+	if len(m.Calls) != 1 {
+		t.Fatalf("expected one zpool call, got %v", m.Calls)
+	}
+	want := []string{"create", "-O", "compression=lz4", "tank", "mirror", "/dev/sdb", "/dev/sdc"}
+	if got := m.Calls[0].Args; !slices.Equal(got, want) {
+		t.Fatalf("unexpected zpool args: got %v want %v", got, want)
+	}
+}
+
+func TestPoolCreateRejectsUnknownCompressionBeforeExec(t *testing.T) {
+	m := &storageexec.MockExec{}
+	err := zfs.PoolCreate(context.Background(), m, zfs.PoolCreateParams{
+		Name:        "tank",
+		Topology:    "stripe",
+		Devices:     []string{"/dev/sdb"},
+		Compression: "rot13",
+	})
+	if err == nil || !strings.Contains(err.Error(), "compression") {
+		t.Fatalf("expected compression error, got %v", err)
+	}
+	if len(m.Calls) != 0 {
+		t.Fatalf("unexpected exec calls: %v", m.Calls)
+	}
+}
+
 func TestPoolDestroyRefusesSnapshotsWithoutForce(t *testing.T) {
 	m := &storageexec.MockExec{Results: map[string]*storageexec.Result{
 		"zfs": {Stdout: []byte("tank/data@s1\n"), ExitCode: 0},
@@ -133,6 +170,36 @@ func TestPoolDestroyRefusesSnapshotsWithoutForce(t *testing.T) {
 	err := zfs.PoolDestroy(context.Background(), m, zfs.PoolDestroyParams{Name: "tank"})
 	if err == nil || !strings.Contains(err.Error(), "snapshots") {
 		t.Fatalf("expected snapshot refusal, got %v", err)
+	}
+}
+
+func TestDatasetCreateAllowsQuotaAndRecordSize(t *testing.T) {
+	m := &storageexec.MockExec{}
+	err := zfs.DatasetCreate(context.Background(), m, zfs.DatasetCreateParams{
+		Dataset: "tank/data",
+		Options: map[string]any{"quota": "100G", "recordsize": "128K"},
+	})
+	if err != nil {
+		t.Fatalf("dataset create: %v", err)
+	}
+	want := []string{"create", "-o", "quota=100G", "-o", "recordsize=128K", "tank/data"}
+	if len(m.Calls) != 1 || !slices.Equal(m.Calls[0].Args, want) {
+		t.Fatalf("unexpected zfs args: got %v want %v", m.Calls, want)
+	}
+}
+
+func TestSnapshotCreateSupportsRecursiveMode(t *testing.T) {
+	m := &storageexec.MockExec{}
+	err := zfs.SnapshotCreate(context.Background(), m, zfs.SnapshotCreateParams{
+		Snapshot:  "tank/data@before-upgrade",
+		Recursive: true,
+	})
+	if err != nil {
+		t.Fatalf("snapshot create: %v", err)
+	}
+	want := []string{"snapshot", "-r", "tank/data@before-upgrade"}
+	if len(m.Calls) != 1 || !slices.Equal(m.Calls[0].Args, want) {
+		t.Fatalf("unexpected zfs args: got %v want %v", m.Calls, want)
 	}
 }
 

@@ -3,6 +3,7 @@ package ct_test
 import (
 	"context"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/pmx-cloud/agents/hypervisor/internal/ct"
@@ -34,12 +35,36 @@ func TestCreate_FullPath(t *testing.T) {
 	m := notFoundCT()
 	var steps []string
 	err := ct.Create(context.Background(), m, map[string]any{
-		"ctid":       "101",
-		"ostemplate": "local:vztmpl/debian-12.tar.xz",
-		"hostname":   "test-ct",
+		"ctid":           "101",
+		"ostemplate":     "local:vztmpl/debian-12.tar.xz",
+		"hostname":       "test-ct",
+		"network_bridge": "vmbr1",
+		"network_ip":     "10.20.30.40/24",
+		"unprivileged":   false,
 	}, func(s string) { steps = append(steps, s) })
 	if err != nil {
 		t.Fatalf("Create full path: %v", err)
+	}
+	joined := strings.Join(m.LastCall().Args, " ")
+	if !strings.Contains(joined, "--net0 name=eth0,bridge=vmbr1,ip=10.20.30.40/24") {
+		t.Fatalf("expected selected bridge and IP in pct create, got %q", joined)
+	}
+	if !strings.Contains(joined, "--unprivileged 0") {
+		t.Fatalf("expected privileged flag in pct create, got %q", joined)
+	}
+}
+
+func TestCreate_RejectsUnsafeNetworkConfig(t *testing.T) {
+	m := notFoundCT()
+	err := ct.Create(context.Background(), m, map[string]any{
+		"ctid": "102", "ostemplate": "local:vztmpl/debian-12.tar.xz",
+		"network_bridge": "vmbr0,rate=0", "network_ip": "not-an-ip",
+	}, noopStep)
+	if err == nil {
+		t.Fatal("expected unsafe network config to be rejected")
+	}
+	if len(m.Calls) != 0 {
+		t.Fatalf("no subprocess expected for unsafe config, got %+v", m.Calls)
 	}
 }
 

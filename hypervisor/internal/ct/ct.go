@@ -4,6 +4,8 @@ package ct
 import (
 	"context"
 	"fmt"
+	"net"
+	"strings"
 
 	"github.com/pmx-cloud/agents/hypervisor/internal/proxmox"
 )
@@ -36,6 +38,18 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 		return fmt.Errorf("ct.create: storage contains unsafe characters")
 	}
 	disk := proxmox.IntParam(params, "disk_gb", 8)
+	networkBridge := proxmox.StringParam(params, "network_bridge", "vmbr0")
+	if !proxmox.IsSafeToken(networkBridge) {
+		return fmt.Errorf("ct.create: network_bridge contains unsafe characters")
+	}
+	networkIP := proxmox.StringParam(params, "network_ip", "dhcp")
+	if !isSafeContainerIP(networkIP) {
+		return fmt.Errorf("ct.create: network_ip must be dhcp or IPv4/CIDR")
+	}
+	unprivileged := true
+	if _, provided := params["unprivileged"]; provided {
+		unprivileged = proxmox.BoolParam(params, "unprivileged")
+	}
 
 	// Idempotency check.
 	if result, _ := px.Pct(ctx, "config", ctid); result != nil && result.ExitCode == 0 {
@@ -54,6 +68,8 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 	args := []string{"create", ctid, ostemplate,
 		"--memory", fmt.Sprintf("%d", memory),
 		"--rootfs", fmt.Sprintf("%s:%d", storage, disk),
+		"--net0", fmt.Sprintf("name=eth0,bridge=%s,ip=%s", networkBridge, networkIP),
+		"--unprivileged", boolInt(unprivileged),
 	}
 	if cores > 0 {
 		args = append(args, "--cores", fmt.Sprintf("%d", cores))
@@ -66,6 +82,24 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 	}
 	stepFn("done")
 	return nil
+}
+
+func isSafeContainerIP(value string) bool {
+	if value == "dhcp" {
+		return true
+	}
+	if strings.TrimSpace(value) != value {
+		return false
+	}
+	address, _, err := net.ParseCIDR(value)
+	return err == nil && address.To4() != nil
+}
+
+func boolInt(value bool) string {
+	if value {
+		return "1"
+	}
+	return "0"
 }
 
 func Update(ctx context.Context, px proxmox.ExecIface, params map[string]any) error {

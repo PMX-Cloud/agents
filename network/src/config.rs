@@ -12,6 +12,8 @@ pub struct Config {
     pub isolation: Isolation,
     #[serde(default)]
     pub state: State,
+    #[serde(default)]
+    pub persistence: Persistence,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -60,10 +62,36 @@ pub struct State {
     pub dir: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct Persistence {
+    #[serde(default = "default_persistence_backend")]
+    pub backend: String,
+    #[serde(default = "default_ifupdown_interfaces_file")]
+    pub ifupdown_interfaces_file: String,
+    #[serde(default = "default_ifupdown_interfaces_dir")]
+    pub ifupdown_interfaces_dir: String,
+    #[serde(default = "default_route_file")]
+    pub route_file: String,
+    #[serde(default = "default_ipv6_route_file")]
+    pub ipv6_route_file: String,
+}
+
 impl Default for State {
     fn default() -> Self {
         Self {
             dir: default_state_dir(),
+        }
+    }
+}
+
+impl Default for Persistence {
+    fn default() -> Self {
+        Self {
+            backend: default_persistence_backend(),
+            ifupdown_interfaces_file: default_ifupdown_interfaces_file(),
+            ifupdown_interfaces_dir: default_ifupdown_interfaces_dir(),
+            route_file: default_route_file(),
+            ipv6_route_file: default_ipv6_route_file(),
         }
     }
 }
@@ -74,6 +102,26 @@ fn default_iface() -> String {
 
 fn default_state_dir() -> String {
     "/var/lib/pmx-cloud/network".to_string()
+}
+
+fn default_persistence_backend() -> String {
+    "auto".to_string()
+}
+
+fn default_ifupdown_interfaces_file() -> String {
+    "/etc/network/interfaces".to_string()
+}
+
+fn default_ifupdown_interfaces_dir() -> String {
+    "/etc/network/interfaces.d".to_string()
+}
+
+fn default_route_file() -> String {
+    "/proc/net/route".to_string()
+}
+
+fn default_ipv6_route_file() -> String {
+    "/proc/net/ipv6_route".to_string()
 }
 
 impl Config {
@@ -111,6 +159,28 @@ impl Config {
         if self.nftables.max_rules_per_host == 0 {
             bail!("nftables.max_rules_per_host must be > 0");
         }
+        if !matches!(self.persistence.backend.as_str(), "auto" | "ifupdown") {
+            bail!("persistence.backend must be auto or ifupdown");
+        }
+        for (field, path) in [
+            (
+                "persistence.ifupdown_interfaces_file",
+                &self.persistence.ifupdown_interfaces_file,
+            ),
+            (
+                "persistence.ifupdown_interfaces_dir",
+                &self.persistence.ifupdown_interfaces_dir,
+            ),
+            ("persistence.route_file", &self.persistence.route_file),
+            (
+                "persistence.ipv6_route_file",
+                &self.persistence.ipv6_route_file,
+            ),
+        ] {
+            if !path.starts_with('/') || path.contains("..") {
+                bail!("{} must be an absolute path without '..'", field);
+            }
+        }
         Ok(())
     }
 }
@@ -147,6 +217,7 @@ mod tests {
                 allow_ssh_from: vec![],
             },
             state: State::default(),
+            persistence: Persistence::default(),
         }
     }
 
@@ -222,6 +293,33 @@ mod tests {
     fn state_default_has_expected_dir() {
         let s = State::default();
         assert_eq!(s.dir, "/var/lib/pmx-cloud/network");
+    }
+
+    #[test]
+    fn persistence_defaults_to_guarded_ifupdown_auto_detection() {
+        let persistence = Persistence::default();
+        assert_eq!(persistence.backend, "auto");
+        assert_eq!(
+            persistence.ifupdown_interfaces_file,
+            "/etc/network/interfaces"
+        );
+        assert_eq!(
+            persistence.ifupdown_interfaces_dir,
+            "/etc/network/interfaces.d"
+        );
+        assert_eq!(persistence.route_file, "/proc/net/route");
+        assert_eq!(persistence.ipv6_route_file, "/proc/net/ipv6_route");
+    }
+
+    #[test]
+    fn reject_unknown_or_relative_persistence_configuration() {
+        let mut cfg = valid_config();
+        cfg.persistence.backend = "netplan".to_string();
+        assert!(cfg.validate().is_err());
+
+        cfg.persistence.backend = "ifupdown".to_string();
+        cfg.persistence.ifupdown_interfaces_dir = "interfaces.d".to_string();
+        assert!(cfg.validate().is_err());
     }
 
     #[test]

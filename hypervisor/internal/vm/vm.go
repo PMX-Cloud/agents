@@ -68,6 +68,7 @@ var vmUpdateAllowlist = map[string]bool{
 	"balloon": true, "numa": true, "agent": true, "ostype": true,
 	"boot": true, "bootdisk": true, "startup": true, "watchdog": true,
 	"hotplug": true, "vcpus": true, "shares": true,
+	"ide2": true,
 }
 
 // Create runs vm.create — idempotent (same VMID + config → success without re-work).
@@ -83,12 +84,42 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 	}
 	memory := proxmox.IntParam(params, "memory", 1024)
 	cores := proxmox.IntParam(params, "cores", 1)
+	sockets := proxmox.IntParam(params, "sockets", 1)
 	net0 := proxmox.StringParam(params, "net0", "virtio,bridge=vmbr0")
 	storage := proxmox.StringParam(params, "storage", "local-lvm")
 	disk := proxmox.StringParam(params, "disk", "")
 	diskGb := proxmox.IntParam(params, "disk_gb", 0)
+	if memory <= 0 || cores <= 0 || sockets <= 0 {
+		return fmt.Errorf("memory, cores, and sockets must be positive integers")
+	}
+	if !isSafeCreateNet0(net0) {
+		return fmt.Errorf("net0 param is not a safe VM network specification: %q", net0)
+	}
 	if !proxmox.IsSafeToken(storage) {
 		return fmt.Errorf("storage param contains unsafe characters: %q", storage)
+	}
+	ostype := proxmox.StringParam(params, "ostype", "l26")
+	if !proxmox.IsSafeToken(ostype) {
+		return fmt.Errorf("ostype param contains unsafe characters: %q", ostype)
+	}
+	cpuModel := proxmox.StringParam(params, "cpu_model", "")
+	if proxmox.BoolParam(params, "nested_virtualization") {
+		cpuModel = "host"
+	}
+	if cpuModel != "" && !proxmox.IsSafeToken(cpuModel) {
+		return fmt.Errorf("cpu_model param contains unsafe characters: %q", cpuModel)
+	}
+	machine := proxmox.StringParam(params, "machine", "")
+	if machine != "" && !proxmox.IsSafeToken(machine) {
+		return fmt.Errorf("machine param contains unsafe characters: %q", machine)
+	}
+	bios := proxmox.StringParam(params, "bios", "")
+	if bios != "" && bios != "seabios" && bios != "ovmf" {
+		return fmt.Errorf("bios must be seabios or ovmf")
+	}
+	bootOrder := proxmox.StringParam(params, "boot_order", "")
+	if bootOrder != "" && !isSafeBootOrder(bootOrder) {
+		return fmt.Errorf("boot_order contains invalid or duplicate devices")
 	}
 
 	// Idempotency: check if VMID already exists.
@@ -108,13 +139,42 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 
 	// Step: allocate.
 	stepFn("allocate")
-	if _, err := px.Qm(ctx, "create", vmid,
+	createArgs := []string{"create", vmid,
 		"--name", name,
 		"--memory", fmt.Sprintf("%d", memory),
 		"--cores", fmt.Sprintf("%d", cores),
+		"--sockets", fmt.Sprintf("%d", sockets),
+		"--ide2", "none,media=cdrom",
 		"--net0", net0,
-		"--ostype", proxmox.StringParam(params, "ostype", "l26"),
-	); err != nil {
+		"--ostype", ostype,
+	}
+	if cpuModel != "" {
+		createArgs = append(createArgs, "--cpu", cpuModel)
+	}
+	if machine != "" {
+		createArgs = append(createArgs, "--machine", machine)
+	}
+	if bios != "" {
+		createArgs = append(createArgs, "--bios", bios)
+	}
+	if agentEnabled, ok := params["agent_enabled"].(bool); ok {
+		agentValue := "enabled=0"
+		if agentEnabled {
+			agentValue = "enabled=1"
+		}
+		createArgs = append(createArgs, "--agent", agentValue)
+	}
+	if startOnBoot, ok := params["start_on_boot"].(bool); ok {
+		onbootValue := "0"
+		if startOnBoot {
+			onbootValue = "1"
+		}
+		createArgs = append(createArgs, "--onboot", onbootValue)
+	}
+	if proxmox.BoolParam(params, "nested_virtualization") {
+		createArgs = append(createArgs, "--tags", "pmx-nested-cloud")
+	}
+	if _, err := px.Qm(ctx, createArgs...); err != nil {
 		return fmt.Errorf("vm.create allocate: %w", err)
 	}
 
@@ -152,8 +212,55 @@ func Create(ctx context.Context, px proxmox.ExecIface, params map[string]any, st
 		}
 	}
 
+	if bootOrder != "" {
+		stepFn("configure-boot-order")
+		if _, err := px.Qm(ctx, "set", vmid, "--boot", "order="+bootOrder); err != nil {
+			return fmt.Errorf("vm.create boot order: %w", err)
+		}
+	}
+
 	stepFn("done")
 	return nil
+}
+
+func isSafeCreateNet0(value string) bool {
+	const prefix = "virtio,bridge="
+	if !strings.HasPrefix(value, prefix) {
+		return false
+	}
+	remainder := strings.TrimPrefix(value, prefix)
+	bridge, firewall, hasFirewall := strings.Cut(remainder, ",")
+	if bridge == "" || !proxmox.IsSafeToken(bridge) {
+		return false
+	}
+	return !hasFirewall || firewall == "firewall=1"
+}
+
+func isSafeBootOrder(value string) bool {
+	devices := strings.Split(value, ";")
+	if len(devices) == 0 {
+		return false
+	}
+	seen := make(map[string]bool, len(devices))
+	for _, device := range devices {
+		if device == "" || seen[device] {
+			return false
+		}
+		seen[device] = true
+		letterEnd := 0
+		for letterEnd < len(device) && device[letterEnd] >= 'a' && device[letterEnd] <= 'z' {
+			letterEnd++
+		}
+		if letterEnd == 0 || letterEnd == len(device) {
+			return false
+		}
+		for _, char := range device[letterEnd:] {
+			if char < '0' || char > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ── vm.update ────────────────────────────────────────────────────────────────
@@ -179,7 +286,10 @@ func Update(ctx context.Context, px proxmox.ExecIface, params map[string]any) er
 			return fmt.Errorf("vm.update: option %q is not in the allowlist", key)
 		}
 		sval := fmt.Sprintf("%v", val)
-		if !proxmox.IsSafeToken(sval) {
+		if key == "ide2" && !isSafeISODevice(sval) {
+			return fmt.Errorf("vm.update: value for %q is not a safe ISO CD-ROM specification", key)
+		}
+		if key != "ide2" && !proxmox.IsSafeToken(sval) {
 			return fmt.Errorf("vm.update: value for %q contains unsafe characters", key)
 		}
 		args = append(args, "--"+key, sval)
@@ -189,6 +299,22 @@ func Update(ctx context.Context, px proxmox.ExecIface, params map[string]any) er
 		return fmt.Errorf("vm.update: %w", err)
 	}
 	return nil
+}
+
+func isSafeISODevice(value string) bool {
+	if value == "none,media=cdrom" {
+		return true
+	}
+	volume, options, ok := strings.Cut(value, ",")
+	if !ok || options != "media=cdrom" {
+		return false
+	}
+	storage, filename, ok := strings.Cut(volume, ":iso/")
+	return ok &&
+		storage != "" && !strings.Contains(storage, "/") && proxmox.IsSafeToken(storage) &&
+		len(filename) > 4 && len(filename) <= 255 && strings.TrimSpace(filename) == filename &&
+		!strings.ContainsAny(filename, "/\\,\r\n\x00") &&
+		strings.HasSuffix(strings.ToLower(filename), ".iso")
 }
 
 // ── Lifecycle: start/stop/reboot/reset/suspend/resume ────────────────────────

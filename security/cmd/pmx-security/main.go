@@ -23,6 +23,7 @@ import (
 	"github.com/pmx-cloud/agents/security/internal/compliance"
 	"github.com/pmx-cloud/agents/security/internal/config"
 	"github.com/pmx-cloud/agents/security/internal/cve"
+	"github.com/pmx-cloud/agents/security/internal/fail2ban"
 	"github.com/pmx-cloud/agents/security/internal/hardening"
 	"github.com/pmx-cloud/agents/security/internal/lynis"
 	"github.com/pmx-cloud/agents/security/internal/rootscope"
@@ -231,6 +232,38 @@ func (h *securityHandler) dispatch(ctx context.Context, env *envpkg.Envelope) ([
 			p.StateDir = h.cfg.State.Dir
 		}
 		res, err := hardening.Apply(ctx, p, nil)
+		if err != nil {
+			return errJSON(err), err
+		}
+		return json.Marshal(res)
+
+	case "fail2ban.install":
+		res, err := fail2ban.Install(ctx, env.JobID, nil)
+		if err != nil {
+			return errJSON(err), err
+		}
+		return json.Marshal(res)
+
+	case "fail2ban.status":
+		res, err := fail2ban.Status(ctx, env.JobID, nil)
+		if err != nil {
+			return errJSON(err), err
+		}
+		return json.Marshal(res)
+
+	case "fail2ban.banned":
+		res, err := fail2ban.Banned(ctx, env.JobID, nil)
+		if err != nil {
+			return errJSON(err), err
+		}
+		return json.Marshal(res)
+
+	case "fail2ban.unban":
+		var p fail2ban.UnbanParams
+		if err := decodeParams(params, &p); err != nil {
+			return errJSON(err), err
+		}
+		res, err := fail2ban.Unban(ctx, env.JobID, p, nil)
 		if err != nil {
 			return errJSON(err), err
 		}

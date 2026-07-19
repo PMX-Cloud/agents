@@ -29,3 +29,13 @@ allow_ssh_from = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 
 [state]
 dir = "/var/lib/pmx-cloud/network"
+
+# Bridge/VLAN mutations currently support only ifupdown/ifupdown2 hosts whose
+# main interfaces file already includes interfaces.d. Auto mode fails closed on
+# netplan or unmanaged systemd-networkd hosts.
+[persistence]
+backend = "auto"
+ifupdown_interfaces_file = "/etc/network/interfaces"
+ifupdown_interfaces_dir = "/etc/network/interfaces.d"
+route_file = "/proc/net/route"
+ipv6_route_file = "/proc/net/ipv6_route"

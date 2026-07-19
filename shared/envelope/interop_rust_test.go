@@ -1,11 +1,11 @@
 package envelope_test
 
 import (
+	"crypto/ed25519"
 	"encoding/hex"
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/pmx-cloud/agents/shared/envelope"
 )
@@ -61,21 +61,18 @@ func TestInterop_RustSignedEnvelopeVerifies(t *testing.T) {
 		t.Fatalf("unmarshal CBOR: %v", err)
 	}
 
-	// The Rust-side fixture has a 30-minute exp window. If
-	// `cargo test interop_writes_rust_signed_envelope` hasn't been run
-	// for a while, the fixture is stale — skip so local Go-only runs stay
-	// green. CI runs both back-to-back.
-	if env.ExpiresAt.Before(time.Now()) {
-		t.Skipf("Rust-signed fixture expired at %s — run: cd agents/shared-rust && cargo test interop_writes_rust_signed_envelope", env.ExpiresAt.Format(time.RFC3339))
+	canonical, err := env.CanonicalBytes()
+	if err != nil {
+		t.Fatalf("canonicalize Rust envelope in Go: %v", err)
 	}
-
-	cache := envelope.NewReplayCache(1000, 24*time.Hour)
-	defer cache.Close()
-
-	// The Rust test writes the envelope with:
-	//   audience = "pmx-network"
-	//   host     = "aabbccdd"
-	if err := env.Verify(ks, "pmx-network", "aabbccdd", cache); err != nil {
-		t.Errorf("Rust-signed envelope must verify in Go: %v", err)
+	signature, err := hex.DecodeString(env.Signature)
+	if err != nil {
+		t.Fatalf("decode Rust signature: %v", err)
+	}
+	if len(signature) != ed25519.SignatureSize || !ks.Verify(canonical, signature) {
+		t.Fatal("Rust-signed envelope signature must verify in Go")
+	}
+	if env.Audience != "pmx-network" || env.Host != "aabbccdd" {
+		t.Fatalf("unexpected Rust fixture context: audience=%q host=%q", env.Audience, env.Host)
 	}
 }

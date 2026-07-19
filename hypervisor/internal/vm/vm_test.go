@@ -76,6 +76,32 @@ func TestUpdate_ValidOption(t *testing.T) {
 	}
 }
 
+func TestUpdate_ValidISODevice(t *testing.T) {
+	m := &proxmox.MockExec{Result: &proxmox.ExecResult{ExitCode: 0}}
+	err := vm.Update(context.Background(), m, map[string]any{
+		"vmid":    "100",
+		"options": map[string]any{"ide2": "local:iso/Windows Server 2025.iso,media=cdrom"},
+	})
+	if err != nil {
+		t.Fatalf("valid ISO device rejected: %v", err)
+	}
+	last := m.LastCall()
+	if len(last.Args) < 4 || last.Args[2] != "--ide2" || last.Args[3] != "local:iso/Windows Server 2025.iso,media=cdrom" {
+		t.Fatalf("unexpected qm args: %v", last.Args)
+	}
+}
+
+func TestUpdate_RejectsUnsafeISODevice(t *testing.T) {
+	m := &proxmox.MockExec{Result: &proxmox.ExecResult{ExitCode: 0}}
+	err := vm.Update(context.Background(), m, map[string]any{
+		"vmid":    "100",
+		"options": map[string]any{"ide2": "local:iso/ubuntu.iso;reboot,media=cdrom"},
+	})
+	if err == nil {
+		t.Fatal("expected unsafe ISO device to be rejected")
+	}
+}
+
 func TestDelete_RequiresStoppedVM(t *testing.T) {
 	// Simulate running VM (qm status returns "running").
 	m := &proxmox.MockExec{

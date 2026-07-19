@@ -6,6 +6,7 @@ mod config;
 mod netlink;
 mod nftables;
 mod ovs;
+mod persistence;
 mod sriov;
 mod vlan;
 mod wireguard;
@@ -27,6 +28,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 use tracing_subscriber::prelude::*;
 
@@ -48,11 +50,17 @@ struct NetworkHandler {
     cfg: Config,
     runner: Runner,
     audit: AuditLog,
+    mutation_lock: Arc<Mutex<()>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct BridgeCreateParams {
     name: String,
+    #[serde(default)]
+    ports: Vec<String>,
+    address: Option<String>,
+    #[serde(default)]
+    stp: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,7 +73,9 @@ struct BridgePortParams {
 struct VlanCreateParams {
     parent: String,
     name: String,
+    #[serde(alias = "tag")]
     vid: u16,
+    address: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -126,17 +136,22 @@ fn declare_capabilities() {
     capability::declare(AGENT_CLASS, "firewall.rules.validate", 1, Stability::Stable);
     capability::declare(AGENT_CLASS, "firewall.rules.apply", 1, Stability::Stable);
     capability::declare(AGENT_CLASS, "firewall.rules.clear", 1, Stability::Stable);
-    capability::declare(AGENT_CLASS, "firewall.emergency.lockdown", 1, Stability::Stable);
+    capability::declare(
+        AGENT_CLASS,
+        "firewall.emergency.lockdown",
+        1,
+        Stability::Stable,
+    );
 
     // Bridge
-    capability::declare(AGENT_CLASS, "bridge.create", 1, Stability::Stable);
-    capability::declare(AGENT_CLASS, "bridge.destroy", 1, Stability::Stable);
-    capability::declare(AGENT_CLASS, "bridge.port.add", 1, Stability::Stable);
-    capability::declare(AGENT_CLASS, "bridge.port.remove", 1, Stability::Stable);
+    capability::declare(AGENT_CLASS, "bridge.create", 1, Stability::Beta);
+    capability::declare(AGENT_CLASS, "bridge.destroy", 1, Stability::Beta);
+    capability::declare(AGENT_CLASS, "bridge.port.add", 1, Stability::Beta);
+    capability::declare(AGENT_CLASS, "bridge.port.remove", 1, Stability::Beta);
 
     // VLAN
-    capability::declare(AGENT_CLASS, "vlan.create", 1, Stability::Stable);
-    capability::declare(AGENT_CLASS, "vlan.destroy", 1, Stability::Stable);
+    capability::declare(AGENT_CLASS, "vlan.create", 1, Stability::Beta);
+    capability::declare(AGENT_CLASS, "vlan.destroy", 1, Stability::Beta);
 
     // OVS
     capability::declare(AGENT_CLASS, "ovs.install", 1, Stability::Beta);
@@ -190,6 +205,7 @@ async fn main() -> Result<()> {
         cfg: cfg.clone(),
         runner: Runner::new(),
         audit,
+        mutation_lock: Arc::new(Mutex::new(())),
     });
 
     let host_fingerprint = fs::read_to_string("/etc/pmx-cloud/host-fingerprint")
@@ -391,34 +407,50 @@ impl NetworkHandler {
 
             "bridge.create" => {
                 let p: BridgeCreateParams = serde_json::from_value(params_value)?;
-                bridge::create(&self.runner, &p.name).await?;
-                json!({"ok": true})
+                let _guard = self.mutation_lock.lock().await;
+                let store = persistence::IfupdownStore::open(&self.cfg.persistence)?;
+                serde_json::to_value(
+                    bridge::create(&self.runner, &store, &p.name, &p.ports, p.address, p.stp)
+                        .await?,
+                )?
             }
             "bridge.destroy" => {
                 let p: BridgeCreateParams = serde_json::from_value(params_value)?;
-                bridge::destroy(&self.runner, &p.name).await?;
-                json!({"ok": true})
+                let _guard = self.mutation_lock.lock().await;
+                let store = persistence::IfupdownStore::open(&self.cfg.persistence)?;
+                serde_json::to_value(bridge::destroy(&self.runner, &store, &p.name).await?)?
             }
             "bridge.port.add" => {
                 let p: BridgePortParams = serde_json::from_value(params_value)?;
-                bridge::port_add(&self.runner, &p.bridge, &p.port).await?;
-                json!({"ok": true})
+                let _guard = self.mutation_lock.lock().await;
+                let store = persistence::IfupdownStore::open(&self.cfg.persistence)?;
+                serde_json::to_value(
+                    bridge::port_add(&self.runner, &store, &p.bridge, &p.port).await?,
+                )?
             }
             "bridge.port.remove" => {
                 let p: BridgePortParams = serde_json::from_value(params_value)?;
-                bridge::port_remove(&self.runner, &p.port).await?;
-                json!({"ok": true})
+                let _guard = self.mutation_lock.lock().await;
+                let store = persistence::IfupdownStore::open(&self.cfg.persistence)?;
+                serde_json::to_value(
+                    bridge::port_remove(&self.runner, &store, &p.bridge, &p.port).await?,
+                )?
             }
 
             "vlan.create" => {
                 let p: VlanCreateParams = serde_json::from_value(params_value)?;
-                vlan::create(&self.runner, &p.parent, &p.name, p.vid).await?;
-                json!({"ok": true})
+                let _guard = self.mutation_lock.lock().await;
+                let store = persistence::IfupdownStore::open(&self.cfg.persistence)?;
+                serde_json::to_value(
+                    vlan::create(&self.runner, &store, &p.parent, &p.name, p.vid, p.address)
+                        .await?,
+                )?
             }
             "vlan.destroy" => {
                 let p: VlanDestroyParams = serde_json::from_value(params_value)?;
-                vlan::destroy(&self.runner, &p.name).await?;
-                json!({"ok": true})
+                let _guard = self.mutation_lock.lock().await;
+                let store = persistence::IfupdownStore::open(&self.cfg.persistence)?;
+                serde_json::to_value(vlan::destroy(&self.runner, &store, &p.name).await?)?
             }
 
             "ovs.install" => {
@@ -594,8 +626,18 @@ fn classify_error(err: &anyhow::Error) -> &'static str {
         "LOCKDOWN_ACTIVE"
     } else if msg.contains("KERNEL_REFUSED") {
         "KERNEL_REFUSED"
-    } else if msg.contains("BRIDGE_IN_USE") {
+    } else if msg.contains("ROLLBACK_FAILED") {
+        "ROLLBACK_FAILED"
+    } else if msg.contains("BRIDGE_IN_USE") || msg.contains("BRIDGE_PORT_IN_USE") {
         "BRIDGE_IN_USE"
+    } else if msg.contains("NETWORK_PERSISTENCE_UNSUPPORTED") {
+        "NETWORK_PERSISTENCE_UNSUPPORTED"
+    } else if msg.contains("MANAGEMENT_INTERFACE_PROTECTED") {
+        "MANAGEMENT_INTERFACE_PROTECTED"
+    } else if msg.contains("INTERFACE_CONFIG_CONFLICT") {
+        "INTERFACE_CONFIG_CONFLICT"
+    } else if msg.contains("INTERFACE_ALREADY") {
+        "INTERFACE_ALREADY_EXISTS"
     } else if msg.contains("UNSUPPORTED") {
         "UNSUPPORTED"
     } else {
@@ -858,8 +900,49 @@ mod tests {
 
     #[test]
     fn classify_bridge_in_use() {
-        let err = anyhow::anyhow!("BRIDGE_IN_USE: br0 still has member ports");
-        assert_eq!(classify_error(&err), "BRIDGE_IN_USE");
+        for message in [
+            "BRIDGE_IN_USE: br0 still has member ports",
+            "BRIDGE_PORT_IN_USE: eth1 is attached to br0",
+        ] {
+            assert_eq!(classify_error(&anyhow::anyhow!(message)), "BRIDGE_IN_USE");
+        }
+    }
+
+    #[test]
+    fn classify_rollback_failure() {
+        let err = anyhow::anyhow!("ROLLBACK_FAILED: runtime state is unknown");
+        assert_eq!(classify_error(&err), "ROLLBACK_FAILED");
+    }
+
+    #[test]
+    fn classifies_persistence_and_management_guards() {
+        for (message, code) in [
+            (
+                "NETWORK_PERSISTENCE_UNSUPPORTED: netplan host",
+                "NETWORK_PERSISTENCE_UNSUPPORTED",
+            ),
+            (
+                "MANAGEMENT_INTERFACE_PROTECTED: eth0 owns a default route",
+                "MANAGEMENT_INTERFACE_PROTECTED",
+            ),
+            (
+                "INTERFACE_CONFIG_CONFLICT: vmbr0 is foreign",
+                "INTERFACE_CONFIG_CONFLICT",
+            ),
+        ] {
+            assert_eq!(classify_error(&anyhow::anyhow!(message)), code);
+        }
+    }
+
+    #[test]
+    fn vlan_create_accepts_canonical_vid_and_legacy_tag() {
+        for payload in [
+            json!({"parent":"vmbr0","name":"vlan100","vid":100}),
+            json!({"parent":"vmbr0","name":"vlan100","tag":100}),
+        ] {
+            let parsed: VlanCreateParams = serde_json::from_value(payload).unwrap();
+            assert_eq!(parsed.vid, 100);
+        }
     }
 
     #[test]

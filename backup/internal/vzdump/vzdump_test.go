@@ -1,11 +1,78 @@
 package vzdump
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestRestoreUsesExplicitGuestCommandAndCloneSafety(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name         string
+		resourceType string
+		wantArgs     string
+	}{
+		{
+			name:         "vm",
+			resourceType: "vm",
+			wantArgs:     "/backups/vm.vma.zst 201 --storage local-zfs --unique 1",
+		},
+		{
+			name:         "container",
+			resourceType: "container",
+			wantArgs:     "restore 201 /backups/ct.tar.zst --storage local-zfs --unique 1",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			argsFile := filepath.Join(dir, "args")
+			status := filepath.Join(dir, "status")
+			restore := filepath.Join(dir, "restore")
+			if err := os.WriteFile(status, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+				t.Fatalf("write status command: %v", err)
+			}
+			script := "#!/bin/sh\nprintf '%s' \"$*\" > " + argsFile + "\n"
+			if err := os.WriteFile(restore, []byte(script), 0o755); err != nil {
+				t.Fatalf("write restore command: %v", err)
+			}
+
+			archive := "/backups/vm.vma.zst"
+			bins := Binaries{QM: status, QMRestore: restore, PCT: status}
+			if tc.resourceType == "container" {
+				archive = "/backups/ct.tar.zst"
+				bins.PCT = restore
+				// The same fake pct binary must report the guest as absent for
+				// `pct status` and record the subsequent `pct restore` call.
+				pctScript := "#!/bin/sh\nif [ \"$1\" = status ]; then exit 1; fi\nprintf '%s' \"$*\" > " + argsFile + "\n"
+				if err := os.WriteFile(restore, []byte(pctScript), 0o755); err != nil {
+					t.Fatalf("write pct command: %v", err)
+				}
+			}
+
+			err := Restore(context.Background(), bins, RestoreParams{
+				ArchivePath:  archive,
+				VMID:         201,
+				Storage:      "local-zfs",
+				ResourceType: tc.resourceType,
+				Unique:       true,
+			}, nil)
+			if err != nil {
+				t.Fatalf("Restore() error = %v", err)
+			}
+			got, err := os.ReadFile(argsFile)
+			if err != nil {
+				t.Fatalf("read restore args: %v", err)
+			}
+			if string(got) != tc.wantArgs {
+				t.Fatalf("restore args = %q, want %q", got, tc.wantArgs)
+			}
+		})
+	}
+}
 
 func TestParseArchivePath(t *testing.T) {
 	t.Parallel()

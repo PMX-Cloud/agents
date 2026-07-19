@@ -24,6 +24,7 @@ type Binaries struct {
 	VZDump    string
 	QM        string
 	QMRestore string
+	PCT       string
 }
 
 type CreateParams struct {
@@ -41,10 +42,12 @@ type CreateResult struct {
 }
 
 type RestoreParams struct {
-	ArchivePath string
-	VMID        int
-	Storage     string
-	Overwrite   bool
+	ArchivePath  string
+	VMID         int
+	Storage      string
+	Overwrite    bool
+	ResourceType string
+	Unique       bool
 }
 
 var (
@@ -138,32 +141,48 @@ func Create(ctx context.Context, bins Binaries, params CreateParams, stepFn func
 }
 
 func Restore(ctx context.Context, bins Binaries, params RestoreParams, stepFn func(string)) error {
+	resourceType := strings.ToLower(strings.TrimSpace(params.ResourceType))
+	if resourceType != "vm" && resourceType != "container" {
+		return fmt.Errorf("restore: resource_type must be vm or container")
+	}
 	if params.VMID <= 0 {
-		return fmt.Errorf("qmrestore: vmid must be > 0")
+		return fmt.Errorf("restore: vmid must be > 0")
 	}
 	if strings.TrimSpace(params.ArchivePath) == "" {
-		return fmt.Errorf("qmrestore: archive_path is required")
+		return fmt.Errorf("restore: archive_path is required")
 	}
 	if !filepath.IsAbs(params.ArchivePath) {
-		return fmt.Errorf("qmrestore: archive_path must be absolute")
+		return fmt.Errorf("restore: archive_path must be absolute")
 	}
 
-	exists, err := VMExists(ctx, bins.QM, params.VMID)
+	statusBinary := bins.QM
+	if resourceType == "container" {
+		statusBinary = bins.PCT
+	}
+	exists, err := GuestExists(ctx, statusBinary, params.VMID)
 	if err != nil {
 		return err
 	}
 	if exists && !params.Overwrite {
-		return fmt.Errorf("qmrestore: vmid %d already exists; overwrite=true required", params.VMID)
+		return fmt.Errorf("restore: vmid %d already exists; overwrite=true required", params.VMID)
 	}
 
+	binary := bins.QMRestore
 	args := []string{params.ArchivePath, strconv.Itoa(params.VMID)}
+	if resourceType == "container" {
+		binary = bins.PCT
+		args = []string{"restore", strconv.Itoa(params.VMID), params.ArchivePath}
+	}
 	if strings.TrimSpace(params.Storage) != "" {
 		args = append(args, "--storage", strings.TrimSpace(params.Storage))
 	}
 	if params.Overwrite {
 		args = append(args, "--force", "1")
 	}
-	return runStream(ctx, bins.QMRestore, args,
+	if params.Unique {
+		args = append(args, "--unique", "1")
+	}
+	return runStream(ctx, binary, args,
 		func(line string) {
 			if stepFn != nil {
 				stepFn(line)
@@ -178,17 +197,21 @@ func Restore(ctx context.Context, bins Binaries, params RestoreParams, stepFn fu
 }
 
 func VMExists(ctx context.Context, qmBinary string, vmid int) (bool, error) {
-	if strings.TrimSpace(qmBinary) == "" {
-		return false, fmt.Errorf("qm binary path is required")
+	return GuestExists(ctx, qmBinary, vmid)
+}
+
+func GuestExists(ctx context.Context, statusBinary string, vmid int) (bool, error) {
+	if strings.TrimSpace(statusBinary) == "" {
+		return false, fmt.Errorf("guest status binary path is required")
 	}
-	cmd := exec.CommandContext(ctx, qmBinary, "status", strconv.Itoa(vmid))
+	cmd := exec.CommandContext(ctx, statusBinary, "status", strconv.Itoa(vmid))
 	if out, err := cmd.CombinedOutput(); err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			_ = out
 			return false, nil
 		}
-		return false, fmt.Errorf("qm status %d: %w", vmid, err)
+		return false, fmt.Errorf("guest status %d: %w", vmid, err)
 	}
 	return true, nil
 }
