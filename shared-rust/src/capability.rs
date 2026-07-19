@@ -145,11 +145,15 @@ impl Registry {
     // -- helpers to avoid repeating .inner.read/write everywhere -------
 
     fn read(&self) -> RwLockReadGuard<'_, RegistryInner> {
-        self.inner.read().expect("capability registry lock poisoned")
+        self.inner
+            .read()
+            .expect("capability registry lock poisoned")
     }
 
     fn write(&self) -> RwLockWriteGuard<'_, RegistryInner> {
-        self.inner.write().expect("capability registry lock poisoned")
+        self.inner
+            .write()
+            .expect("capability registry lock poisoned")
     }
 }
 
@@ -189,7 +193,12 @@ mod tests {
     #[test]
     fn declare_and_list() {
         let reg = Registry::new();
-        reg.declare(Capability::new("pmx-test", "test.ping", 1, Stability::Stable));
+        reg.declare(Capability::new(
+            "pmx-test",
+            "test.ping",
+            1,
+            Stability::Stable,
+        ));
         reg.declare(Capability::new("pmx-test", "test.pong", 2, Stability::Beta));
 
         let caps = reg.list();
@@ -202,8 +211,18 @@ mod tests {
     #[test]
     fn declare_idempotent() {
         let reg = Registry::new();
-        reg.declare(Capability::new("pmx-test", "test.ping", 1, Stability::Stable));
-        reg.declare(Capability::new("pmx-test", "test.ping", 1, Stability::Stable));
+        reg.declare(Capability::new(
+            "pmx-test",
+            "test.ping",
+            1,
+            Stability::Stable,
+        ));
+        reg.declare(Capability::new(
+            "pmx-test",
+            "test.ping",
+            1,
+            Stability::Stable,
+        ));
         assert_eq!(reg.list().len(), 1);
     }
 
@@ -211,14 +230,29 @@ mod tests {
     #[should_panic(expected = "already declared by agent class")]
     fn declare_conflict_panics() {
         let reg = Registry::new();
-        reg.declare(Capability::new("pmx-test", "test.ping", 1, Stability::Stable));
-        reg.declare(Capability::new("pmx-other", "test.ping", 1, Stability::Stable));
+        reg.declare(Capability::new(
+            "pmx-test",
+            "test.ping",
+            1,
+            Stability::Stable,
+        ));
+        reg.declare(Capability::new(
+            "pmx-other",
+            "test.ping",
+            1,
+            Stability::Stable,
+        ));
     }
 
     #[test]
     fn has_and_has_from() {
         let reg = Registry::new();
-        reg.declare(Capability::new("pmx-test", "test.ping", 1, Stability::Stable));
+        reg.declare(Capability::new(
+            "pmx-test",
+            "test.ping",
+            1,
+            Stability::Stable,
+        ));
 
         assert!(reg.has("test.ping"));
         assert!(!reg.has("test.missing"));

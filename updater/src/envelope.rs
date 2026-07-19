@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use pmx_shared::envelope::Envelope;
 use pmx_shared::keyset::KeySet;
 use pmx_shared::replay::ReplayCache;
@@ -40,8 +40,8 @@ pub fn read_and_verify_envelope(
     }
 
     let env = Envelope::from_cbor(stdin).map_err(anyhow::Error::msg)?;
-    let keyset_raw = fs::read_to_string(keyset_path)
-        .with_context(|| format!("read keyset {}", keyset_path))?;
+    let keyset_raw =
+        fs::read_to_string(keyset_path).with_context(|| format!("read keyset {}", keyset_path))?;
     let keyset = KeySet::parse(&keyset_raw).map_err(anyhow::Error::msg)?;
     let host_fingerprint = fs::read_to_string(host_fingerprint_path)
         .with_context(|| format!("read host fingerprint {}", host_fingerprint_path))?
@@ -54,7 +54,12 @@ pub fn read_and_verify_envelope(
     // Lock the process-wide singleton so replays are caught across calls.
     let mut replay = replay_cache().lock().expect("replay cache mutex poisoned");
     let key_index = env
-        .verify_identifying(&keyset.active_keys(), AGENT_CLASS, &host_fingerprint, &mut replay)
+        .verify_identifying(
+            &keyset.active_keys(),
+            AGENT_CLASS,
+            &host_fingerprint,
+            &mut replay,
+        )
         .map_err(anyhow::Error::msg)?;
 
     Ok(VerifiedEnvelope {

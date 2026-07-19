@@ -94,10 +94,7 @@ impl KeySet {
     /// Returns the verifying key at the given index, if it exists and is active.
     pub fn active_key_at(&self, index: usize) -> Option<VerifyingKey> {
         let inner = self.inner.read();
-        inner
-            .get(index)
-            .filter(|e| e.is_active())
-            .map(|e| e.key)
+        inner.get(index).filter(|e| e.is_active()).map(|e| e.key)
     }
 
     /// Returns the active verifying keys (for use with envelope::Envelope::verify).

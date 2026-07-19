@@ -38,8 +38,7 @@ pub fn verify_manifest(
     sig_bytes: &[u8],
     pubkey: &VerifyingKey,
 ) -> Result<(), VerifyError> {
-    let sig = Signature::from_slice(sig_bytes)
-        .map_err(|_| VerifyError::BadManifestSignature)?;
+    let sig = Signature::from_slice(sig_bytes).map_err(|_| VerifyError::BadManifestSignature)?;
     pubkey
         .verify(bytes, &sig)
         .map_err(|_| VerifyError::BadManifestSignature)

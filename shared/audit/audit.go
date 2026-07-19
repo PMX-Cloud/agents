@@ -149,7 +149,7 @@ func (l *Log) Iter(fromSeq uint64) (<-chan Entry, error) {
 		if err != nil {
 			return
 		}
-		defer f.Close()
+		defer func() { _ = f.Close() }()
 		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
 			var e Entry
@@ -193,7 +193,7 @@ func (l *Log) Verify() error {
 	if err != nil {
 		return fmt.Errorf("audit: verify open: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	prevHash := ""
 	scanner := bufio.NewScanner(f)

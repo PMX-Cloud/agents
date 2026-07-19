@@ -13,7 +13,10 @@ use pmx_updater::{
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::fs;
-use wiremock::{Mock, MockServer, ResponseTemplate, matchers::{method, path}};
+use wiremock::{
+    matchers::{method, path},
+    Mock, MockServer, ResponseTemplate,
+};
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
@@ -54,7 +57,8 @@ fn dispatch_maintenance_set_roundtrip() {
     )
     .unwrap();
 
-    let loaded = pmx_updater::maintenance::window::read_cache(cache_path.to_str().unwrap()).unwrap();
+    let loaded =
+        pmx_updater::maintenance::window::read_cache(cache_path.to_str().unwrap()).unwrap();
     assert_eq!(loaded.windows.len(), 1);
     assert_eq!(loaded.windows[0].days, vec!["Sun"]);
 }
@@ -240,7 +244,11 @@ fn health_check_nonexistent_agent() {
 #[test]
 fn config_load_missing_file() {
     let err = Config::load("/tmp/no-such-config-file-xyz.conf").unwrap_err();
-    assert!(err.to_string().contains("config") || err.to_string().contains("no such file") || err.to_string().contains("not found"));
+    assert!(
+        err.to_string().contains("config")
+            || err.to_string().contains("no such file")
+            || err.to_string().contains("not found")
+    );
 }
 
 #[test]
@@ -369,7 +377,9 @@ async fn check_with_mock_server_reports_available() {
     let url = server.uri();
     let cfg = config_with_manifest_url(&url);
 
-    let result = agent_update::check_async(&cfg).await.expect("check should succeed");
+    let result = agent_update::check_async(&cfg)
+        .await
+        .expect("check should succeed");
     assert_eq!(result["available"], json!(true));
     assert_eq!(result["latest"], json!("99.0.0"));
 }
@@ -397,7 +407,9 @@ async fn check_with_mock_server_same_version_not_available() {
     let url = server.uri();
     let cfg = config_with_manifest_url(&url);
 
-    let result = agent_update::check_async(&cfg).await.expect("check should succeed");
+    let result = agent_update::check_async(&cfg)
+        .await
+        .expect("check should succeed");
     assert_eq!(result["available"], json!(false));
 }
 

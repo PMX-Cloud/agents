@@ -26,7 +26,10 @@ pub enum FetchError {
 /// Fetches `{base_url}/manifest.json` and `{base_url}/manifest.sig`.
 /// Returns `(manifest_bytes, sig_bytes)`.
 /// Retries up to 3 times with 1s/2s/4s backoff on HTTP 5xx or connection errors.
-pub async fn fetch_manifest(base_url: &str, client: &Client) -> Result<(Vec<u8>, Vec<u8>), FetchError> {
+pub async fn fetch_manifest(
+    base_url: &str,
+    client: &Client,
+) -> Result<(Vec<u8>, Vec<u8>), FetchError> {
     let manifest_url = format!("{}/manifest.json", base_url.trim_end_matches('/'));
     let sig_url = format!("{}/manifest.sig", base_url.trim_end_matches('/'));
 
@@ -56,9 +59,7 @@ async fn fetch_with_retry(client: &Client, url: &str) -> Result<Vec<u8>, FetchEr
             Ok(resp) => {
                 let status = resp.status();
                 if status.is_server_error() {
-                    last_err = Some(FetchError::Http(
-                        resp.error_for_status().unwrap_err(),
-                    ));
+                    last_err = Some(FetchError::Http(resp.error_for_status().unwrap_err()));
                     continue;
                 }
                 let bytes = resp.error_for_status()?.bytes().await?;
@@ -135,8 +136,8 @@ mod tests {
     use super::*;
     use sha2::{Digest, Sha256};
     use tempfile::tempdir;
-    use wiremock::{Mock, MockServer, ResponseTemplate};
     use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     // ── FetchError display ─────────────────────────────────────────────────
 
@@ -158,7 +159,11 @@ mod tests {
             "not found",
         ));
         let msg = err.to_string();
-        assert!(msg.contains("not found"), "should contain io error: {}", msg);
+        assert!(
+            msg.contains("not found"),
+            "should contain io error: {}",
+            msg
+        );
     }
 
     // ── fetch_manifest with wiremock ────────────────────────────────────────
@@ -171,13 +176,19 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/manifest.json"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(manifest_body.as_slice(), "application/json"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(manifest_body.as_slice(), "application/json"),
+            )
             .mount(&server)
             .await;
 
         Mock::given(method("GET"))
             .and(path("/manifest.sig"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(sig_body.as_slice(), "application/octet-stream"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(sig_body.as_slice(), "application/octet-stream"),
+            )
             .mount(&server)
             .await;
 
@@ -237,7 +248,10 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/my-agent"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(content.as_slice(), "application/octet-stream"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(content.as_slice(), "application/octet-stream"),
+            )
             .mount(&server)
             .await;
 
@@ -261,14 +275,18 @@ mod tests {
 
         Mock::given(method("GET"))
             .and(path("/my-agent"))
-            .respond_with(ResponseTemplate::new(200).set_body_raw(content.as_slice(), "application/octet-stream"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(content.as_slice(), "application/octet-stream"),
+            )
             .mount(&server)
             .await;
 
         let dir = tempdir().expect("tempdir");
         let client = Client::new();
         let url = format!("{}/my-agent", server.uri());
-        let wrong_hash = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+        let wrong_hash =
+            "0000000000000000000000000000000000000000000000000000000000000000".to_string();
 
         let result = fetch_binary(&url, &wrong_hash, dir.path(), &client).await;
         assert!(result.is_err(), "hash mismatch should fail");

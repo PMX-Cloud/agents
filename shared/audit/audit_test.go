@@ -99,7 +99,7 @@ func TestAudit_TamperDetection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer l2.Close()
+	defer func() { _ = l2.Close() }()
 
 	if err := l2.Verify(); err == nil {
 		t.Fatal("expected tamper detection error, got nil")
@@ -127,7 +127,7 @@ func TestAudit_CrashRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen after crash: %v", err)
 	}
-	defer l2.Close()
+	defer func() { _ = l2.Close() }()
 
 	if l2.Head() != validHead {
 		t.Fatalf("head after crash recovery: got %q, want %q", l2.Head(), validHead)
@@ -173,7 +173,7 @@ func TestInterop_GoAuditDumpFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
-	defer l.Close()
+	defer func() { _ = l.Close() }()
 
 	// Use fixed UTC timestamps with different sub-second precisions to exercise
 	// the trailing-zero stripping in RFC3339Nano.

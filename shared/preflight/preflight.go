@@ -47,10 +47,12 @@ func RunTo(w io.Writer, checks []Check) int {
 		err := c.Run(ctx)
 		cancel()
 		if err != nil {
-			fmt.Fprintf(w, "[FAIL] %s — %v\n", c.Name, err)
+			_, _ = fmt.Fprintf(w, "[FAIL] %s — %v\n", c.Name, err)
 			exitCode = 1
 		} else {
-			fmt.Fprintf(w, "[PASS] %s\n", c.Name)
+			if _, writeErr := fmt.Fprintf(w, "[PASS] %s\n", c.Name); writeErr != nil {
+				exitCode = 1
+			}
 		}
 	}
 	return exitCode

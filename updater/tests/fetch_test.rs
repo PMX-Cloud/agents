@@ -98,10 +98,17 @@ fn find_entry_by_name_and_arch() {
     let bytes = sample_manifest_bytes();
     let m = manifest::Manifest::parse(&bytes).expect("parse");
 
-    let entry = m.find_entry("pmx-updater", "amd64").expect("must find pmx-updater amd64");
-    assert_eq!(entry.sha256, "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890");
+    let entry = m
+        .find_entry("pmx-updater", "amd64")
+        .expect("must find pmx-updater amd64");
+    assert_eq!(
+        entry.sha256,
+        "abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"
+    );
 
-    let entry_arm = m.find_entry("pmx-updater", "aarch64").expect("must find pmx-updater aarch64");
+    let entry_arm = m
+        .find_entry("pmx-updater", "aarch64")
+        .expect("must find pmx-updater aarch64");
     assert_eq!(entry_arm.sha256, "bbbbb");
 
     assert!(
@@ -125,7 +132,9 @@ fn find_entry_empty_agents_errors() {
     .to_string()
     .into_bytes();
     let m = manifest::Manifest::parse(&bytes).expect("parse");
-    let err = m.find_entry("pmx-updater", "amd64").expect_err("empty agents must not find any");
+    let err = m
+        .find_entry("pmx-updater", "amd64")
+        .expect_err("empty agents must not find any");
     assert!(matches!(err, manifest::ManifestError::MissingEntry { .. }));
 }
 
@@ -168,7 +177,8 @@ fn verify_binary_hash_mismatch() {
     f.flush().unwrap();
 
     let (signing_key, verifying_key) = fresh_keypair();
-    let wrong_sha256 = "0000000000000000000000000000000000000000000000000000000000000000".to_string();
+    let wrong_sha256 =
+        "0000000000000000000000000000000000000000000000000000000000000000".to_string();
     let digest_bytes = Sha256::digest(content);
     let sig = signing_key.sign(digest_bytes.as_slice());
     let sig_hex = hex::encode(sig.to_bytes());
@@ -212,7 +222,8 @@ fn verify_manifest_bad_signature() {
     let mut bad_sig = sig.to_bytes();
     bad_sig[0] ^= 0xff;
 
-    let err = verify::verify_manifest(data, &bad_sig, &verifying_key).expect_err("bad sig must fail");
+    let err =
+        verify::verify_manifest(data, &bad_sig, &verifying_key).expect_err("bad sig must fail");
     assert!(matches!(err, verify::VerifyError::BadManifestSignature));
 }
 

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use chrono::{DateTime, Datelike, NaiveTime, TimeZone, Utc, Weekday};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -152,7 +152,7 @@ fn weekday_before(day: Weekday) -> Weekday {
 
 #[cfg(test)]
 mod tests {
-    use super::{WindowSet, WindowSpec, is_now};
+    use super::{is_now, WindowSet, WindowSpec};
     use chrono::{TimeZone, Utc};
 
     fn utc_window(start: &str, end: &str, days: &[&str]) -> WindowSet {
@@ -169,28 +169,32 @@ mod tests {
     #[test]
     fn empty_windows_are_inactive() {
         let set = WindowSet { windows: vec![] };
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 2, 30, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 2, 30, 0).unwrap()).expect("status");
         assert!(!status.active);
     }
 
     #[test]
     fn active_inside_same_day_window() {
         let set = utc_window("02:00", "06:00", &["Sat"]);
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 2, 30, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 2, 30, 0).unwrap()).expect("status");
         assert!(status.active);
     }
 
     #[test]
     fn inactive_outside_window() {
         let set = utc_window("02:00", "06:00", &["Sat"]);
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 7, 0, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 7, 0, 0).unwrap()).expect("status");
         assert!(!status.active);
     }
 
     #[test]
     fn active_across_midnight_uses_previous_day_membership() {
         let set = utc_window("22:00", "02:00", &["Sat"]);
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 17, 1, 30, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 17, 1, 30, 0).unwrap()).expect("status");
         assert!(status.active);
     }
 
@@ -204,7 +208,8 @@ mod tests {
                 tz: "+02:00".to_string(),
             }],
         };
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 1, 0, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 1, 0, 0).unwrap()).expect("status");
         assert!(status.active);
     }
 
@@ -212,7 +217,8 @@ mod tests {
     fn same_start_end_is_inactive() {
         // start == end → always inactive (line 76)
         let set = utc_window("03:00", "03:00", &["Sat"]);
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 3, 0, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 3, 0, 0).unwrap()).expect("status");
         assert!(!status.active);
     }
 
@@ -220,7 +226,8 @@ mod tests {
     fn midnight_span_current_after_start() {
         // start > end (22:00-02:00), current >= start → active if day matches (line 89)
         let set = utc_window("22:00", "02:00", &["Sat"]);
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 23, 0, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 23, 0, 0).unwrap()).expect("status");
         assert!(status.active);
     }
 
@@ -228,7 +235,8 @@ mod tests {
     fn midnight_span_current_after_start_wrong_day_inactive() {
         // start > end, current >= start, but wrong day → inactive
         let set = utc_window("22:00", "02:00", &["Sat"]);
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 17, 23, 0, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 17, 23, 0, 0).unwrap()).expect("status");
         assert!(!status.active);
     }
 
@@ -273,7 +281,8 @@ mod tests {
             }],
         };
         // 07:00 UTC = 02:00 in -05:00
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 7, 0, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 16, 7, 0, 0).unwrap()).expect("status");
         assert!(status.active);
     }
 
@@ -310,12 +319,23 @@ mod tests {
     fn window_identifier_includes_index() {
         let set = WindowSet {
             windows: vec![
-                WindowSpec { days: vec!["Mon".to_string()], start: "01:00".to_string(), end: "02:00".to_string(), tz: "UTC".to_string() },
-                WindowSpec { days: vec!["Tue".to_string()], start: "01:00".to_string(), end: "02:00".to_string(), tz: "UTC".to_string() },
+                WindowSpec {
+                    days: vec!["Mon".to_string()],
+                    start: "01:00".to_string(),
+                    end: "02:00".to_string(),
+                    tz: "UTC".to_string(),
+                },
+                WindowSpec {
+                    days: vec!["Tue".to_string()],
+                    start: "01:00".to_string(),
+                    end: "02:00".to_string(),
+                    tz: "UTC".to_string(),
+                },
             ],
         };
         // Monday 01:30 UTC
-        let status = is_now(&set, Utc.with_ymd_and_hms(2026, 5, 18, 1, 30, 0).unwrap()).expect("status");
+        let status =
+            is_now(&set, Utc.with_ymd_and_hms(2026, 5, 18, 1, 30, 0).unwrap()).expect("status");
         assert!(status.active);
         assert_eq!(status.window.unwrap().identifier, "window-0");
     }

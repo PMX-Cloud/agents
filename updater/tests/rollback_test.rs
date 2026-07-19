@@ -115,9 +115,15 @@ fn sentinel_rollback_triggers_restore() {
     );
 
     if let Ok(rolled_back_version) = result {
-        assert_eq!(rolled_back_version, "2.0.0", "must report rolled-back version");
+        assert_eq!(
+            rolled_back_version, "2.0.0",
+            "must report rolled-back version"
+        );
         // Sentinel should be removed after rollback
-        assert!(!sentinel_path.exists(), "sentinel must be removed after rollback");
+        assert!(
+            !sentinel_path.exists(),
+            "sentinel must be removed after rollback"
+        );
         // Current should now have v1 content
         assert_eq!(
             fs::read_to_string(current_dir.join("agent-binary")).unwrap(),
@@ -172,5 +178,8 @@ fn clear_sentinel_after_successful_update() {
 
     // After successful update, sentinel should be cleared
     pmx_updater::agent_update::rollback::clear_sentinel(&sentinel_path).unwrap();
-    assert!(!sentinel_path.exists(), "sentinel must be cleared after successful update");
+    assert!(
+        !sentinel_path.exists(),
+        "sentinel must be cleared after successful update"
+    );
 }

@@ -83,7 +83,7 @@ func RecordHeartbeats(ctx context.Context, t *testing.T, server *httptest.Server
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		go func() {
 			<-ctx.Done()

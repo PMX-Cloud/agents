@@ -92,7 +92,8 @@ mod tests {
     fn override_with_job_key_rejected() {
         let windows = empty_windows();
         // No windows defined, override=true, job key (index 1)
-        let err = check_update_allowed(&windows, true, 1).expect_err("should reject job key override");
+        let err =
+            check_update_allowed(&windows, true, 1).expect_err("should reject job key override");
         assert!(
             err.to_string().contains("override_requires_release_key"),
             "expected override_requires_release_key, got: {}",

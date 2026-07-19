@@ -134,20 +134,16 @@ pub fn check_disk_space(path: &str, required_bytes: u64) -> Result<(), HealthErr
     if available >= required_bytes {
         Ok(())
     } else {
-        Err(HealthError::Io(std::io::Error::other(
-            format!(
-                "insufficient disk space: {} bytes available, {} required",
-                available, required_bytes
-            ),
-        )))
+        Err(HealthError::Io(std::io::Error::other(format!(
+            "insufficient disk space: {} bytes available, {} required",
+            available, required_bytes
+        ))))
     }
 }
 
 /// Check that a binary is on PATH by checking `which <name>`.
 pub fn check_binary_on_path(name: &str) -> Result<(), HealthError> {
-    let status = Command::new("which")
-        .arg(name)
-        .status()?;
+    let status = Command::new("which").arg(name).status()?;
 
     if status.success() {
         Ok(())

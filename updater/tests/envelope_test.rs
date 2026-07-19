@@ -3,7 +3,7 @@
 //! Covers: empty stdin, bad CBOR, missing keyset, missing host fingerprint,
 //! wrong audience, wrong host, replay detection, and dual-key identification.
 
-use ed25519_dalek::{SigningKey, Signer, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 use rand::rngs::OsRng;
 use std::collections::BTreeMap;
 
@@ -14,11 +14,7 @@ fn make_keypair() -> (VerifyingKey, SigningKey) {
 }
 
 /// Build a properly-signed CBOR envelope for pmx-updater.
-fn make_updater_envelope(
-    sk: &SigningKey,
-    command: &str,
-    host_fp: &str,
-) -> Vec<u8> {
+fn make_updater_envelope(sk: &SigningKey, command: &str, host_fp: &str) -> Vec<u8> {
     use chrono::{Duration, Utc};
     let now = Utc::now();
     let mut params = BTreeMap::new();
@@ -259,13 +255,12 @@ fn dual_key_identification_release_vs_job() {
 
     // Sign with release key (index 0)
     let cbor_release = make_updater_envelope(&release_sk, "update.agent.check", "aabbccdd");
-    let verified_release =
-        pmx_updater::envelope::read_and_verify_envelope(
-            &cbor_release,
-            ks_path.to_str().unwrap(),
-            fp_path.to_str().unwrap(),
-        )
-        .unwrap();
+    let verified_release = pmx_updater::envelope::read_and_verify_envelope(
+        &cbor_release,
+        ks_path.to_str().unwrap(),
+        fp_path.to_str().unwrap(),
+    )
+    .unwrap();
     assert_eq!(
         verified_release.signing_key_index, 0,
         "release key must be index 0"
@@ -273,17 +268,13 @@ fn dual_key_identification_release_vs_job() {
 
     // Sign with job key (index 1)
     let cbor_job = make_updater_envelope(&job_sk, "update.agent.check", "aabbccdd");
-    let verified_job =
-        pmx_updater::envelope::read_and_verify_envelope(
-            &cbor_job,
-            ks_path.to_str().unwrap(),
-            fp_path.to_str().unwrap(),
-        )
-        .unwrap();
-    assert_eq!(
-        verified_job.signing_key_index, 1,
-        "job key must be index 1"
-    );
+    let verified_job = pmx_updater::envelope::read_and_verify_envelope(
+        &cbor_job,
+        ks_path.to_str().unwrap(),
+        fp_path.to_str().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(verified_job.signing_key_index, 1, "job key must be index 1");
 }
 
 #[test]

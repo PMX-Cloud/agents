@@ -258,8 +258,7 @@ mod tests {
         write_file(&backup.join("bin/agent"), "old binary");
         write_file(&backup.join("VERSION"), "1.4.0");
 
-        restore_from_backup(backup.to_str().unwrap(), current.to_str().unwrap())
-            .expect("restore");
+        restore_from_backup(backup.to_str().unwrap(), current.to_str().unwrap()).expect("restore");
 
         assert!(current.join("bin/agent").exists());
         assert_eq!(
@@ -278,8 +277,7 @@ mod tests {
         write_file(&current.join("agent"), "new");
         write_file(&current.join("extra"), "extra");
 
-        restore_from_backup(backup.to_str().unwrap(), current.to_str().unwrap())
-            .expect("restore");
+        restore_from_backup(backup.to_str().unwrap(), current.to_str().unwrap()).expect("restore");
 
         assert_eq!(
             std::fs::read_to_string(current.join("agent")).expect("read"),
@@ -321,8 +319,12 @@ mod tests {
         // Create sentinel.
         health::create_sentinel("1.4.2", &sentinel_path).expect("create sentinel");
 
-        let version = sentinel_rollback(&sentinel_path, backup.to_str().unwrap(), current.to_str().unwrap())
-            .expect("sentinel rollback");
+        let version = sentinel_rollback(
+            &sentinel_path,
+            backup.to_str().unwrap(),
+            current.to_str().unwrap(),
+        )
+        .expect("sentinel rollback");
 
         assert_eq!(version, "1.4.2");
         // Current should now have old content.
@@ -341,8 +343,12 @@ mod tests {
         let backup = dir.path().join("backup");
         let current = dir.path().join("current");
 
-        let version = sentinel_rollback(&sentinel_path, backup.to_str().unwrap(), current.to_str().unwrap())
-            .expect("no sentinel");
+        let version = sentinel_rollback(
+            &sentinel_path,
+            backup.to_str().unwrap(),
+            current.to_str().unwrap(),
+        )
+        .expect("no sentinel");
 
         assert!(version.is_empty());
     }

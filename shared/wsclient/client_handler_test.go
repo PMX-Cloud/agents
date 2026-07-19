@@ -61,7 +61,7 @@ func TestRun_DispatchesValidEnvelope(t *testing.T) {
 		if conn == nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.WriteMessage(websocket.BinaryMessage, envBytes)
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
@@ -135,7 +135,7 @@ func TestRun_IgnoresTextControlFrames(t *testing.T) {
 		if conn == nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		_ = conn.WriteMessage(
 			websocket.TextMessage,
 			[]byte(`{"version":"pmx-agent-v1","type":"cloud.hello","timestamp":1,"payload":{}}`),
@@ -183,7 +183,7 @@ func TestSendRaw_WhileConnected(t *testing.T) {
 		if conn == nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {

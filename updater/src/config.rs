@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::fs;
 use std::path::Path;
@@ -149,7 +149,10 @@ maintenance_window_cache_path = "/var/lib/pmx-cloud/updater/window.json"
 "#;
         std::fs::write(&path, raw).unwrap();
         let cfg = Config::load(path.to_str().unwrap()).expect("load config from file");
-        assert_eq!(cfg.identity.host_fingerprint_file, "/etc/pmx-cloud/host-fingerprint");
+        assert_eq!(
+            cfg.identity.host_fingerprint_file,
+            "/etc/pmx-cloud/host-fingerprint"
+        );
     }
 
     #[test]

@@ -6,10 +6,10 @@ pub mod swap;
 pub mod verify;
 
 use crate::config::Config;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use ed25519_dalek::VerifyingKey;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tracing::info;
 
 /// Returns the effective release pubkey.
@@ -77,10 +77,9 @@ pub async fn check_async(cfg: &Config) -> Result<Value> {
     }
 
     let client = reqwest::Client::new();
-    let (manifest_bytes, sig_bytes) =
-        fetch::fetch_manifest(&cfg.files.manifest_url, &client)
-            .await
-            .context("fetch manifest")?;
+    let (manifest_bytes, sig_bytes) = fetch::fetch_manifest(&cfg.files.manifest_url, &client)
+        .await
+        .context("fetch manifest")?;
 
     // Verify manifest signature — prefer baked-in key, fall back to config.
     if let Some(pubkey) = effective_release_pubkey(cfg).context("resolve release pubkey")? {
@@ -124,149 +123,146 @@ pub async fn apply_async(cfg: &Config) -> Result<Value> {
         bail!("manifest_url is not configured — cannot apply update");
     }
 
-        let client = reqwest::Client::new();
+    let client = reqwest::Client::new();
 
-        // 1. Fetch manifest.
-        let (manifest_bytes, sig_bytes) =
-            fetch::fetch_manifest(&cfg.files.manifest_url, &client)
-                .await
-                .context("fetch manifest")?;
+    // 1. Fetch manifest.
+    let (manifest_bytes, sig_bytes) = fetch::fetch_manifest(&cfg.files.manifest_url, &client)
+        .await
+        .context("fetch manifest")?;
 
-        // Verify manifest signature — prefer baked-in key, fall back to config.
-        if let Some(pubkey) = effective_release_pubkey(cfg).context("resolve release pubkey")? {
-            verify::verify_manifest(&manifest_bytes, &sig_bytes, &pubkey)
-                .context("verify manifest signature")?;
+    // Verify manifest signature — prefer baked-in key, fall back to config.
+    if let Some(pubkey) = effective_release_pubkey(cfg).context("resolve release pubkey")? {
+        verify::verify_manifest(&manifest_bytes, &sig_bytes, &pubkey)
+            .context("verify manifest signature")?;
+    }
+
+    let m = manifest::Manifest::parse(&manifest_bytes).context("parse manifest")?;
+    let entry = m
+        .find_entry(&cfg.identity.agent_name, &cfg.identity.agent_arch)
+        .context("find agent entry in manifest")?;
+
+    info!(
+        agent = %cfg.identity.agent_name,
+        arch  = %cfg.identity.agent_arch,
+        url   = %entry.url,
+        version = %m.version,
+        "starting binary fetch"
+    );
+
+    // 2. Fetch binary.
+    let staging_dir = std::path::Path::new(&cfg.files.staging_dir);
+    let staged_path = fetch::fetch_binary(&entry.url, &entry.sha256, staging_dir, &client)
+        .await
+        .context("fetch binary")?;
+
+    // 3. Verify binary signature — prefer baked-in key, fall back to config.
+    if let Some(pubkey) =
+        effective_release_pubkey(cfg).context("resolve release pubkey for binary")?
+    {
+        verify::verify_binary(&staged_path, &entry.sha256, &entry.sig, &pubkey)
+            .context("verify binary signature")?;
+    }
+
+    // 4. Swap or Fork-and-Handoff.
+    let agents_base = std::path::Path::new(&cfg.files.agents_base);
+
+    if cfg.identity.agent_name == "pmx-updater" {
+        // Self-update fork-and-handoff
+        let agent_dir = agents_base.join("pmx-updater");
+        let versions_dir = agent_dir.join("versions");
+        let new_version_dir = versions_dir.join(&m.version);
+        std::fs::create_dir_all(&new_version_dir).context("create new version dir")?;
+
+        let dest_binary = new_version_dir.join("pmx-updater");
+        std::fs::copy(&staged_path, &dest_binary).context("copy staged binary")?;
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&dest_binary, std::fs::Permissions::from_mode(0o755))?;
         }
 
-        let m = manifest::Manifest::parse(&manifest_bytes).context("parse manifest")?;
-        let entry = m
-            .find_entry(&cfg.identity.agent_name, &cfg.identity.agent_arch)
-            .context("find agent entry in manifest")?;
-
-        info!(
-            agent = %cfg.identity.agent_name,
-            arch  = %cfg.identity.agent_arch,
-            url   = %entry.url,
-            version = %m.version,
-            "starting binary fetch"
-        );
-
-        // 2. Fetch binary.
-        let staging_dir = std::path::Path::new(&cfg.files.staging_dir);
-        let staged_path =
-            fetch::fetch_binary(&entry.url, &entry.sha256, staging_dir, &client)
-                .await
-                .context("fetch binary")?;
-
-        // 3. Verify binary signature — prefer baked-in key, fall back to config.
-        if let Some(pubkey) = effective_release_pubkey(cfg).context("resolve release pubkey for binary")? {
-            verify::verify_binary(&staged_path, &entry.sha256, &entry.sig, &pubkey)
-                .context("verify binary signature")?;
-        }
-
-        // 4. Swap or Fork-and-Handoff.
-        let agents_base = std::path::Path::new(&cfg.files.agents_base);
-        
-        if cfg.identity.agent_name == "pmx-updater" {
-            // Self-update fork-and-handoff
-            let agent_dir = agents_base.join("pmx-updater");
-            let versions_dir = agent_dir.join("versions");
-            let new_version_dir = versions_dir.join(&m.version);
-            std::fs::create_dir_all(&new_version_dir).context("create new version dir")?;
-            
-            let dest_binary = new_version_dir.join("pmx-updater");
-            std::fs::copy(&staged_path, &dest_binary).context("copy staged binary")?;
-            
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&dest_binary, std::fs::Permissions::from_mode(0o755))?;
-            }
-            
-            // Clean up staged file
-            let _ = std::fs::remove_file(&staged_path);
-            
-            // Write sentinel
-            let sentinel_path = format!("/run/pmx-cloud/updater.swap.{}", m.version);
-            std::fs::write(&sentinel_path, "").context("write swap sentinel")?;
-            
-            // Get old version
-            let current_link = agent_dir.join("current");
-            let old_version = if current_link.exists() || current_link.is_symlink() {
-                if let Ok(target) = std::fs::read_link(&current_link) {
-                    swap::extract_version_from_target(&target, "pmx-updater")
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-            
-            let old_ver_str = old_version.unwrap_or_else(|| "0.0.0".to_string());
-            
-            info!(
-                version = %m.version,
-                old_version = %old_ver_str,
-                "execing new pmx-updater binary for self-swap"
-            );
-            
-            // Exec the new binary
-            #[cfg(unix)]
-            {
-                use std::os::unix::process::CommandExt;
-                let err = std::process::Command::new(&dest_binary)
-                    .arg("--finalize-self-swap")
-                    .arg(&old_ver_str)
-                    .arg("--config")
-                    .arg("/etc/pmx-cloud/pmx-updater.conf") // We just use the default
-                    .exec();
-                    
-                bail!("exec new updater failed: {}", err);
-            }
-            #[cfg(not(unix))]
-            {
-                bail!("self-update requires Unix");
-            }
-        }
-
-        let handle = swap::install_new_version(
-            agents_base,
-            &cfg.identity.agent_name,
-            &m.version,
-            &staged_path,
-        )
-        .context("install new version")?;
-
-        // Clean up staged file (best-effort).
+        // Clean up staged file
         let _ = std::fs::remove_file(&staged_path);
 
-        // 5. Health check.
-        let config_path = cfg.files.maintenance_window_cache_path.as_str();
-        if let Err(e) = health::check(
-            &cfg.identity.agent_name,
-            health::AgentKind::Persistent,
-            config_path,
-        ) {
-            // Rollback.
-            if let Err(rb_err) = rollback::execute(
-                &handle,
-                health::AgentKind::Persistent,
-                config_path,
-            ) {
-                bail!(
-                    "health check failed ({}) and rollback also failed: {}",
-                    e,
-                    rb_err
-                );
-            }
-            bail!("health check failed after update, rolled back: {}", e);
-        }
+        // Write sentinel
+        let sentinel_path = format!("/run/pmx-cloud/updater.swap.{}", m.version);
+        std::fs::write(&sentinel_path, "").context("write swap sentinel")?;
 
-        Ok(json!({
-            "applied": true,
-            "version": m.version,
-            "message": format!("updated {} to {}", cfg.identity.agent_name, m.version),
-        }))
+        // Get old version
+        let current_link = agent_dir.join("current");
+        let old_version = if current_link.exists() || current_link.is_symlink() {
+            if let Ok(target) = std::fs::read_link(&current_link) {
+                swap::extract_version_from_target(&target, "pmx-updater")
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let old_ver_str = old_version.unwrap_or_else(|| "0.0.0".to_string());
+
+        info!(
+            version = %m.version,
+            old_version = %old_ver_str,
+            "execing new pmx-updater binary for self-swap"
+        );
+
+        // Exec the new binary
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::CommandExt;
+            let err = std::process::Command::new(&dest_binary)
+                .arg("--finalize-self-swap")
+                .arg(&old_ver_str)
+                .arg("--config")
+                .arg("/etc/pmx-cloud/pmx-updater.conf") // We just use the default
+                .exec();
+
+            bail!("exec new updater failed: {}", err);
+        }
+        #[cfg(not(unix))]
+        {
+            bail!("self-update requires Unix");
+        }
+    }
+
+    let handle = swap::install_new_version(
+        agents_base,
+        &cfg.identity.agent_name,
+        &m.version,
+        &staged_path,
+    )
+    .context("install new version")?;
+
+    // Clean up staged file (best-effort).
+    let _ = std::fs::remove_file(&staged_path);
+
+    // 5. Health check.
+    let config_path = cfg.files.maintenance_window_cache_path.as_str();
+    if let Err(e) = health::check(
+        &cfg.identity.agent_name,
+        health::AgentKind::Persistent,
+        config_path,
+    ) {
+        // Rollback.
+        if let Err(rb_err) = rollback::execute(&handle, health::AgentKind::Persistent, config_path)
+        {
+            bail!(
+                "health check failed ({}) and rollback also failed: {}",
+                e,
+                rb_err
+            );
+        }
+        bail!("health check failed after update, rolled back: {}", e);
+    }
+
+    Ok(json!({
+        "applied": true,
+        "version": m.version,
+        "message": format!("updated {} to {}", cfg.identity.agent_name, m.version),
+    }))
 }
 
 #[cfg(test)]

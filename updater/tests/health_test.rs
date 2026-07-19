@@ -21,13 +21,19 @@ fn sentinel_create_and_read_roundtrip() {
         .expect("create_sentinel must succeed");
 
     // Verify file exists
-    assert!(sentinel_path.exists(), "sentinel file must exist after create");
+    assert!(
+        sentinel_path.exists(),
+        "sentinel file must exist after create"
+    );
 
     // Read it back
     let sentinel = pmx_updater::agent_update::health::read_sentinel(&sentinel_path)
         .expect("read_sentinel must succeed")
         .expect("sentinel must be Some after create");
-    assert_eq!(sentinel.version, version, "sentinel version must round-trip");
+    assert_eq!(
+        sentinel.version, version,
+        "sentinel version must round-trip"
+    );
 }
 
 #[test]
@@ -39,7 +45,10 @@ fn sentinel_clear_deletes_file() {
     assert!(sentinel_path.exists());
 
     pmx_updater::agent_update::health::clear_sentinel(&sentinel_path).unwrap();
-    assert!(!sentinel_path.exists(), "sentinel must be deleted after clear");
+    assert!(
+        !sentinel_path.exists(),
+        "sentinel must be deleted after clear"
+    );
 }
 
 #[test]
@@ -49,7 +58,10 @@ fn sentinel_read_missing_file_returns_none() {
 
     let result = pmx_updater::agent_update::health::read_sentinel(&sentinel_path)
         .expect("read_sentinel of missing file should not error");
-    assert!(result.is_none(), "reading nonexistent sentinel must return None");
+    assert!(
+        result.is_none(),
+        "reading nonexistent sentinel must return None"
+    );
 }
 
 #[test]
@@ -59,7 +71,11 @@ fn sentinel_clear_missing_file_ok() {
 
     // Clearing a nonexistent sentinel should be OK (idempotent)
     let result = pmx_updater::agent_update::health::clear_sentinel(&sentinel_path);
-    assert!(result.is_ok(), "clearing missing sentinel should be ok: {:?}", result);
+    assert!(
+        result.is_ok(),
+        "clearing missing sentinel should be ok: {:?}",
+        result
+    );
 }
 
 #[test]
@@ -73,7 +89,10 @@ fn sentinel_create_overwrites_existing() {
     let sentinel = pmx_updater::agent_update::health::read_sentinel(&sentinel_path)
         .unwrap()
         .unwrap();
-    assert_eq!(sentinel.version, "2.0.0", "sentinel must reflect latest write");
+    assert_eq!(
+        sentinel.version, "2.0.0",
+        "sentinel must reflect latest write"
+    );
 }
 
 #[test]
@@ -82,20 +101,23 @@ fn check_file_readable_with_existing_file() {
     let file_path = dir.path().join("test-file");
     fs::write(&file_path, "test content").unwrap();
 
-    let result = pmx_updater::agent_update::health::check_file_readable(file_path.to_str().unwrap());
+    let result =
+        pmx_updater::agent_update::health::check_file_readable(file_path.to_str().unwrap());
     assert!(result.is_ok(), "existing readable file must pass check");
 }
 
 #[test]
 fn check_file_readable_with_missing_file() {
-    let result = pmx_updater::agent_update::health::check_file_readable("/tmp/nonexistent-pmx-test-12345");
+    let result =
+        pmx_updater::agent_update::health::check_file_readable("/tmp/nonexistent-pmx-test-12345");
     assert!(result.is_err(), "missing file must fail check");
 }
 
 #[test]
 fn check_directory_writable_with_writable_dir() {
     let dir = setup_test_env();
-    let result = pmx_updater::agent_update::health::check_directory_writable(dir.path().to_str().unwrap());
+    let result =
+        pmx_updater::agent_update::health::check_directory_writable(dir.path().to_str().unwrap());
     assert!(result.is_ok(), "writable directory must pass check");
 }
 
@@ -112,7 +134,8 @@ fn check_directory_writable_with_readonly_dir() {
 fn check_disk_space_has_reasonable_amount() {
     let dir = setup_test_env();
     // Request a small amount (1KB) — should always pass
-    let result = pmx_updater::agent_update::health::check_disk_space(dir.path().to_str().unwrap(), 1024);
+    let result =
+        pmx_updater::agent_update::health::check_disk_space(dir.path().to_str().unwrap(), 1024);
     assert!(result.is_ok(), "1KB disk space request must pass");
 }
 
@@ -120,7 +143,10 @@ fn check_disk_space_has_reasonable_amount() {
 fn check_disk_space_excessive_amount_fails() {
     let dir = setup_test_env();
     // Request an absurd amount (1 Exabyte) — should fail
-    let result = pmx_updater::agent_update::health::check_disk_space(dir.path().to_str().unwrap(), 1_152_921_504_606_846_976);
+    let result = pmx_updater::agent_update::health::check_disk_space(
+        dir.path().to_str().unwrap(),
+        1_152_921_504_606_846_976,
+    );
     assert!(result.is_err(), "1EB disk space request must fail");
 }
 
@@ -133,6 +159,7 @@ fn check_binary_on_path_with_known_binary() {
 
 #[test]
 fn check_binary_on_path_with_unknown_binary() {
-    let result = pmx_updater::agent_update::health::check_binary_on_path("pmx-nonexistent-binary-xyz-12345");
+    let result =
+        pmx_updater::agent_update::health::check_binary_on_path("pmx-nonexistent-binary-xyz-12345");
     assert!(result.is_err(), "nonexistent binary must fail check");
 }

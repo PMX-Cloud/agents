@@ -112,7 +112,9 @@ pub fn install_self(handle: &SwapHandle) -> Result<(), SwapError> {
     }
 
     // Atomically update `current` symlink.
-    let new_target = PathBuf::from("versions").join(&handle.new_version).join(&handle.agent);
+    let new_target = PathBuf::from("versions")
+        .join(&handle.new_version)
+        .join(&handle.agent);
     atomic_symlink(&agent_dir, "current", &new_target)?;
 
     // Write VERSION file.
@@ -124,7 +126,7 @@ pub fn install_self(handle: &SwapHandle) -> Result<(), SwapError> {
 /// Roll back pmx-updater to the previous version and emit audit event.
 pub fn rollback_self(cfg: &crate::config::Config) -> anyhow::Result<()> {
     let agent_dir = std::path::Path::new(&cfg.files.agents_base).join("pmx-updater");
-    
+
     // Read the current symlink to determine old_version before we update it.
     let current_link = agent_dir.join("current");
     let old_version = if current_link.exists() || current_link.is_symlink() {
@@ -142,7 +144,7 @@ pub fn rollback_self(cfg: &crate::config::Config) -> anyhow::Result<()> {
             if let Some(old_ver) = extract_version_from_target(&target, "pmx-updater") {
                 atomic_symlink(&agent_dir, "current", &target)?;
                 std::fs::write(agent_dir.join("VERSION"), &old_ver)?;
-                
+
                 // Try to clean up the bad new version
                 if let Some(bad_ver) = old_version {
                     let bad_target = agent_dir.join("versions").join(&bad_ver);
@@ -199,7 +201,9 @@ pub fn extract_version_from_target(target: &Path, agent: &str) -> Option<String>
     }
     components.pop();
     // The component before agent is the version.
-    components.last().map(|c| c.as_os_str().to_string_lossy().to_string())
+    components
+        .last()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
 }
 
 #[cfg(test)]
@@ -227,15 +231,15 @@ mod tests {
         let handle_v1 = install_new_version(&agents_base, "pmx-network", "1.4.1", &staged_v1)
             .expect("install v1");
         assert_eq!(handle_v1.new_version, "1.4.1");
-        assert!(handle_v1.old_version.is_none(), "no previous for first install");
+        assert!(
+            handle_v1.old_version.is_none(),
+            "no previous for first install"
+        );
 
         // Verify current → versions/1.4.1/pmx-network
         let current_link = agents_base.join("pmx-network").join("current");
         let current_target = std::fs::read_link(&current_link).expect("read current link");
-        assert_eq!(
-            current_target,
-            PathBuf::from("versions/1.4.1/pmx-network")
-        );
+        assert_eq!(current_target, PathBuf::from("versions/1.4.1/pmx-network"));
 
         // Stage v2 binary.
         let staged_v2 = base.path().join("staged-v2");
@@ -248,17 +252,11 @@ mod tests {
 
         // current → v2, previous → v1
         let current_target = std::fs::read_link(&current_link).expect("read current link v2");
-        assert_eq!(
-            current_target,
-            PathBuf::from("versions/1.4.2/pmx-network")
-        );
+        assert_eq!(current_target, PathBuf::from("versions/1.4.2/pmx-network"));
 
         let previous_link = agents_base.join("pmx-network").join("previous");
         let previous_target = std::fs::read_link(&previous_link).expect("read previous link");
-        assert_eq!(
-            previous_target,
-            PathBuf::from("versions/1.4.1/pmx-network")
-        );
+        assert_eq!(previous_target, PathBuf::from("versions/1.4.1/pmx-network"));
     }
 
     #[cfg(unix)]
@@ -281,11 +279,9 @@ mod tests {
 
         // After rollback, current should point to v1.
         let current_link = agents_base.join("pmx-network").join("current");
-        let current_target = std::fs::read_link(&current_link).expect("read current link after rollback");
-        assert_eq!(
-            current_target,
-            PathBuf::from("versions/1.4.1/pmx-network")
-        );
+        let current_target =
+            std::fs::read_link(&current_link).expect("read current link after rollback");
+        assert_eq!(current_target, PathBuf::from("versions/1.4.1/pmx-network"));
 
         // VERSION file should be v1.
         let version_content =
@@ -379,8 +375,8 @@ mod tests {
 
         let staged = base.path().join("staged-v1");
         write_fake_binary(&staged);
-        let handle = install_new_version(&agents_base, "pmx-updater", "2.0.0", &staged)
-            .expect("install v1");
+        let handle =
+            install_new_version(&agents_base, "pmx-updater", "2.0.0", &staged).expect("install v1");
 
         // install_self with no old_version should still work (no previous symlink).
         install_self(&handle).expect("install self no prev");
@@ -461,10 +457,7 @@ mod tests {
     #[test]
     fn extract_version_from_target_wrong_agent() {
         let target = PathBuf::from("versions/1.4.2/pmx-other");
-        assert_eq!(
-            extract_version_from_target(&target, "pmx-network"),
-            None
-        );
+        assert_eq!(extract_version_from_target(&target, "pmx-network"), None);
     }
 
     #[test]
@@ -502,7 +495,8 @@ mod tests {
 
         install_new_version(&agents_base, "pmx-core", "3.0.0", &staged).expect("install");
 
-        let version = std::fs::read_to_string(agents_base.join("pmx-core/VERSION")).expect("VERSION");
+        let version =
+            std::fs::read_to_string(agents_base.join("pmx-core/VERSION")).expect("VERSION");
         assert_eq!(version, "3.0.0");
     }
 }

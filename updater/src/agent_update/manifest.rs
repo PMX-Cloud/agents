@@ -110,7 +110,10 @@ mod tests {
         let bytes = sample_manifest_bytes();
         let m = Manifest::parse(&bytes).expect("parse");
         let entry = m.find_entry("pmx-network", "amd64").expect("should find");
-        assert_eq!(entry.url, "https://releases.pmxcloud.cloud/v1.4.2/pmx-network-1.4.2-linux-amd64");
+        assert_eq!(
+            entry.url,
+            "https://releases.pmxcloud.cloud/v1.4.2/pmx-network-1.4.2-linux-amd64"
+        );
         assert_eq!(entry.sha256, "deadbeef");
     }
 
@@ -118,7 +121,9 @@ mod tests {
     fn find_entry_missing_returns_err() {
         let bytes = sample_manifest_bytes();
         let m = Manifest::parse(&bytes).expect("parse");
-        let err = m.find_entry("pmx-nonexistent", "amd64").expect_err("should miss");
+        let err = m
+            .find_entry("pmx-nonexistent", "amd64")
+            .expect_err("should miss");
         assert!(matches!(err, ManifestError::MissingEntry { .. }));
         assert!(err.to_string().contains("pmx-nonexistent"));
     }

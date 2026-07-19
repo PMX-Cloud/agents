@@ -25,7 +25,7 @@ func startEchoServer(t *testing.T, handler func(*websocket.Conn)) *httptest.Serv
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		handler(conn)
 	}))
 	return srv
@@ -214,7 +214,7 @@ func TestRun_DialUsesAgentRouteWithoutDoubleAppending(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
@@ -262,7 +262,7 @@ func TestRun_DialIncludesAuthHeaders(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				return
@@ -317,7 +317,7 @@ func TestHeartbeatAssert(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 		for {
 			_, msg, err := conn.ReadMessage()
 			if err != nil {

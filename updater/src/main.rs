@@ -155,24 +155,14 @@ fn dispatch(
             vec![],
         )?)?),
         "update.os.apply.security" => {
-            let windows = read_cache(&cfg.files.maintenance_window_cache_path)?;
-            let override_window = params
-                .get("override_window")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            maintenance::check_update_allowed(&windows, override_window, signing_key_index)?;
+            check_os_update_allowed(cfg, params, signing_key_index)?;
             Ok(serde_json::to_value(os_update::apt::apply(
                 os_update::ApplyMode::Security,
                 vec![],
             )?)?)
         }
         "update.os.apply.full" => {
-            let windows = read_cache(&cfg.files.maintenance_window_cache_path)?;
-            let override_window = params
-                .get("override_window")
-                .and_then(|v| v.as_bool())
-                .unwrap_or(false);
-            maintenance::check_update_allowed(&windows, override_window, signing_key_index)?;
+            check_os_update_allowed(cfg, params, signing_key_index)?;
             Ok(serde_json::to_value(os_update::apt::apply(
                 os_update::ApplyMode::Full,
                 vec![],
@@ -193,9 +183,22 @@ fn dispatch(
     }
 }
 
+fn check_os_update_allowed(
+    cfg: &Config,
+    params: &BTreeMap<String, Value>,
+    signing_key_index: usize,
+) -> Result<()> {
+    let windows = read_cache(&cfg.files.maintenance_window_cache_path)?;
+    let override_window = params
+        .get("override_window")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    maintenance::check_update_allowed(&windows, override_window, signing_key_index)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{declare_capabilities, dispatch, AGENT_CLASS};
+    use super::{check_os_update_allowed, declare_capabilities, dispatch, AGENT_CLASS};
     use crate::config::{Config, FilesConfig, IdentityConfig, KeysetConfig};
     use pmx_shared::capability;
     #[allow(unused_imports)]
@@ -327,15 +330,12 @@ mod tests {
         );
         let _ = dispatch(&cfg, "update.maintenance.set", &set_params, 0).expect("set result");
 
-        // Override with release key (index=0) should succeed
+        // Override with release key (index=0) should pass authorization without
+        // invoking the host package manager from this unit test.
         let mut apply_params = BTreeMap::new();
         apply_params.insert("override_window".to_string(), json!(true));
-        let result = dispatch(&cfg, "update.os.apply.security", &apply_params, 0);
-        assert!(
-            result.is_ok(),
-            "override with release key should be permitted: {:?}",
-            result
-        );
+        check_os_update_allowed(&cfg, &apply_params, 0)
+            .expect("override with release key should be permitted");
     }
 
     #[test]
