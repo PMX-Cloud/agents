@@ -4,10 +4,31 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/pmx-cloud/agents/core/internal/enroll"
 )
+
+func TestRun_BackendReturnsNonJSON405(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		_, _ = w.Write([]byte("405 Method Not Allowed"))
+	}))
+	defer srv.Close()
+
+	err := enroll.Run(t.Context(), &enroll.Config{
+		EnrollURL: srv.URL + "/agents/enroll",
+		CertDir:   t.TempDir(),
+		Token:     "tok-001",
+	})
+	if err == nil {
+		t.Fatal("expected error for 405 response")
+	}
+	if !strings.Contains(err.Error(), "backend error: HTTP 405") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
 
 func TestRun_BackendReturns400_EmptyError(t *testing.T) {
 	// 400 with no error message should fall back to "HTTP 400".

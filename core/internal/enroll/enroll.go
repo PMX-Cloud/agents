@@ -119,17 +119,23 @@ func Run(ctx context.Context, cfg *Config) error {
 	}
 	defer resp.Body.Close()
 
-	var enrollResp enrollResponse
-	if err := json.NewDecoder(resp.Body).Decode(&enrollResp); err != nil {
-		return fmt.Errorf("enroll: decode response: %w", err)
-	}
-
 	if resp.StatusCode != http.StatusOK {
+		var enrollResp enrollResponse
+		// Reverse proxies commonly return a plain-text 404/405 when the optional
+		// mTLS enrollment route is not deployed. Preserve the HTTP status even
+		// when that body is not JSON so the installer can select its explicit
+		// token-auth fallback without masking malformed successful responses.
+		_ = json.NewDecoder(resp.Body).Decode(&enrollResp)
 		msg := enrollResp.Error
 		if msg == "" {
 			msg = fmt.Sprintf("HTTP %d", resp.StatusCode)
 		}
 		return fmt.Errorf("enroll: backend error: %s", msg)
+	}
+
+	var enrollResp enrollResponse
+	if err := json.NewDecoder(resp.Body).Decode(&enrollResp); err != nil {
+		return fmt.Errorf("enroll: decode response: %w", err)
 	}
 
 	if enrollResp.Certificate == "" {
