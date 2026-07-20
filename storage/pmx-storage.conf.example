@@ -1,0 +1,28 @@
+[backend]
+url = "wss://api.pmxcloud.example/ws/agent/storage"
+ca_cert = "/etc/pmx-cloud/backend-ca.crt"
+
+[identity]
+cert = "/etc/pmx-cloud/pmx-storage/client.crt"
+key = "/etc/pmx-cloud/pmx-storage/client.key"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[state]
+dir = "/var/lib/pmx-cloud/storage"
+
+[commands]
+lsblk_path = "/sbin/lsblk"
+parted_path = "/sbin/parted"
+wipefs_path = "/sbin/wipefs"
+mkfs_ext4_path = "/sbin/mkfs.ext4"
+mkfs_xfs_path = "/sbin/mkfs.xfs"
+mkfs_btrfs_path = "/sbin/mkfs.btrfs"
+zpool_path = "/sbin/zpool"
+zfs_path = "/sbin/zfs"
+smartctl_path = "/usr/sbin/smartctl"
+exportfs_path = "/usr/sbin/exportfs"
+net_path = "/usr/bin/net"
+nvme_path = "/usr/sbin/nvme"
+qemu_img_path = "/usr/bin/qemu-img"

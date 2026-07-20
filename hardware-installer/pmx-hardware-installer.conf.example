@@ -1,0 +1,60 @@
+[identity]
+cert = "/etc/pmx-cloud/pmx-hardware-installer/client.crt"
+key = "/etc/pmx-cloud/pmx-hardware-installer/client.key"
+host_fingerprint_file = "/etc/pmx-cloud/host-fingerprint"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[paths]
+apt_get = "/usr/bin/apt-get"
+apt_cache = "/usr/bin/apt-cache"
+lspci = "/usr/bin/lspci"
+dkms = "/usr/sbin/dkms"
+update_grub = "/usr/sbin/update-grub"
+pveupgrade = "/usr/bin/pveupgrade"
+modprobe = "/usr/sbin/modprobe"
+systemd_run = "/usr/bin/systemd-run"
+qm = "/usr/sbin/qm"
+systemctl = "/usr/bin/systemctl"
+
+[files]
+grub_default_path = "/etc/default/grub"
+cpuinfo_path = "/proc/cpuinfo"
+sriov_modprobe_config_path = "/etc/modprobe.d/sriov.conf"
+lxc_config_dir = "/etc/pve/lxc"
+apt_tune_config_dir = "/etc/apt/apt.conf.d"
+ksm_tune_config_path = "/etc/ksmtuned.conf"
+community_release_key_path = "/etc/pmx-cloud/community-script-release.pub"
+
+[policy]
+allowed_kernel_modules = [
+  "vfio",
+  "vfio_pci",
+  "vfio_iommu_type1",
+  "vfio_virqfd",
+  "apex",
+  "kvm",
+  "kvm_intel",
+  "kvm_amd",
+]
+allowed_utility_packages = [
+  "axel",
+  "htop",
+  "btop",
+  "iftop",
+  "iotop",
+  "iperf3",
+  "tmux",
+  "dialog",
+  "msr-tools",
+  "net-tools",
+  "libguestfs-tools",
+  "s-tui",
+  "intel-gpu-tools",
+  "lsof",
+]
+allowed_script_interpreters = ["/bin/bash", "/bin/sh", "/usr/bin/python3"]
+allowed_script_write_roots = ["/tmp", "/var/tmp"]
+community_output_limit_bytes = 10485760
+community_max_timeout_seconds = 600

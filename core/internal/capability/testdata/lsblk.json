@@ -1,0 +1,7 @@
+{
+  "blockdevices": [
+    {"name":"sda","size":"500107862016","rota":"1","type":"disk"},
+    {"name":"nvme0n1","size":"1000204886016","rota":"0","type":"disk"},
+    {"name":"loop0","size":"69206016","rota":"0","type":"loop"}
+  ]
+}

@@ -1,0 +1,20 @@
+[identity]
+cert = "/etc/pmx-cloud/pmx-console-broker/client.crt"
+key = "/etc/pmx-cloud/pmx-console-broker/client.key"
+host_fingerprint_file = "/etc/pmx-cloud/host-fingerprint"
+
+[keyset]
+path = "/etc/pmx-cloud/keyset.pub"
+
+[console]
+qm_binary = "/usr/sbin/qm"
+qemu_run_dir = "/var/run/qemu-server"
+
+[policy]
+allowed_backend_host_suffixes = [".pmxcloud.example"]
+
+[limits]
+default_rate_limit_mbps = 100
+
+[state]
+replay_cache_path = "/var/lib/pmx-cloud/console-broker/replay.log"
