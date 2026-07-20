@@ -403,10 +403,18 @@ type resultFrame struct {
 	Error   string          `json:"error,omitempty"`
 }
 
-// deriveEnrollURL converts the WS URL to an HTTPS enroll endpoint.
+// deriveEnrollURL converts the configured WebSocket URL to the matching HTTP
+// enrollment endpoint. TLS is preserved: wss becomes https and ws becomes
+// http. The latter is required for explicitly configured private-LAN installs.
 // wss://api.example.com/ws/agent/core → https://api.example.com/agents/enroll
 func deriveEnrollURL(wsURL string) string {
-	s := strings.Replace(wsURL, "wss://", "https://", 1)
+	s := wsURL
+	switch {
+	case strings.HasPrefix(s, "wss://"):
+		s = "https://" + strings.TrimPrefix(s, "wss://")
+	case strings.HasPrefix(s, "ws://"):
+		s = "http://" + strings.TrimPrefix(s, "ws://")
+	}
 	// Strip any ws-specific path.
 	if idx := strings.Index(s, "/ws/"); idx >= 0 {
 		s = s[:idx]
